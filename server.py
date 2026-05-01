@@ -41,8 +41,15 @@ if MONGO_URI.startswith("mongodb+srv://"):
     mongo_kwargs["tls"] = True
     mongo_kwargs["tlsCAFile"] = certifi.where()
 
-client = MongoClient(MONGO_URI, **mongo_kwargs)
-db     = client[DB_NAME]
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, **mongo_kwargs)
+    client.server_info()  # force connection check
+    print("✅ MongoDB connected")
+except Exception as e:
+    print("❌ MongoDB connection failed:", e)
+    client = MongoClient("mongodb://localhost:27017")
+
+db = client[DB_NAME]
 users_col    = db["users"]
 products_col = db["products"]
 orders_col   = db["orders"]
