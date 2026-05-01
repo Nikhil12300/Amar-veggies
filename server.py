@@ -41,12 +41,16 @@ if MONGO_URI.startswith("mongodb+srv://"):
     mongo_kwargs["tls"] = True
     mongo_kwargs["tlsCAFile"] = certifi.where()
 
+client = None
+
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, **mongo_kwargs)
-    client.server_info()  # force connection check
+    client.server_info()
     print("✅ MongoDB connected")
 except Exception as e:
     print("❌ MongoDB connection failed:", e)
+
+if client is None:
     client = MongoClient("mongodb://localhost:27017")
 
 db = client[DB_NAME]
@@ -153,7 +157,11 @@ def seed_admin():
         })
         print("✅ Seeded admin — email: nikhilsonkar12300@gmail.com  password: 846c45b78d41")
 
-seed_admin()
+try:
+    seed_admin()
+    print("✅ Admin seeded / checked")
+except Exception as e:
+    print("❌ Seed admin failed:", e)
 
 # ── Auth ──────────────────────────────────────────────────────────
 @app.post("/api/auth/register")
