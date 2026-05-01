@@ -145,17 +145,24 @@ class OrderStatusIn(BaseModel):
     status: str
 
 # ── Seed Admin ────────────────────────────────────────────────────
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
 def seed_admin():
-    if not users_col.find_one({"email": "nikhilsonkar12300@gmail.com"}):
+    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+        print("⚠️ Admin env vars missing, skipping seed admin")
+        return
+
+    if not users_col.find_one({"email": ADMIN_EMAIL}):
         users_col.insert_one({
-            "id":       str(uuid.uuid4()),
-            "name":     "Admin",
-            "email":    "nikhilsonkar12300@gmail.com",
-            "password": hash_password("846c45b78d41"),
+            "id": str(uuid.uuid4()),
+            "name": "Admin",
+            "email": ADMIN_EMAIL,
+            "password": hash_password(ADMIN_PASSWORD),
             "is_admin": True,
             "created_at": datetime.utcnow().isoformat(),
         })
-        print("✅ Seeded admin — email: nikhilsonkar12300@gmail.com  password: 846c45b78d41")
+        print("✅ Seeded admin")
 
 try:
     seed_admin()
