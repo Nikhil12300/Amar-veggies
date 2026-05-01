@@ -51,7 +51,7 @@ except Exception as e:
     print("❌ MongoDB connection failed:", e)
 
 if client is None:
-    client = MongoClient("mongodb://localhost:27017")
+    raise RuntimeError("MongoDB connection failed. Check MONGO_URI.")
 
 db = client[DB_NAME]
 users_col    = db["users"]
