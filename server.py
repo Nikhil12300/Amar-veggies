@@ -333,7 +333,12 @@ def seed_admin():
         conn.commit()
         print("✅ Seeded admin")
     else:
-        print("✅ Admin already exists")
+        conn.execute(
+            "UPDATE users SET password = ?, is_admin = 1 WHERE email = ?",
+            (hash_password(ADMIN_PASSWORD), ADMIN_EMAIL),
+        )
+        conn.commit()
+        print("✅ Admin password updated")
     conn.close()
 
 init_db()
