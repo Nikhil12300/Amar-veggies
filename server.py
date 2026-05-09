@@ -1,17 +1,15 @@
+
 """
-Amar Veggies - Local SQLite Backend API
+Amar Veggies - PostgreSQL/SQLAlchemy Backend API
+
+Production:
+    Set DATABASE_URL in Render to your PostgreSQL Internal Database URL.
 
 Run once:
     pip install -r requirements.txt
 
 Start backend:
     python server.py
-
-Local API:
-    http://localhost:8000/api
-
-Data is stored locally in:
-    amar_veggies.db
 """
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
@@ -22,10 +20,12 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy import create_engine, Column, String, Integer, Float, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.exc import IntegrityError
 import uuid
 import os
 import json
-import sqlite3
 import base64
 import random
 import re
@@ -33,34 +33,109 @@ import re
 # ── Config ────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "amar-veggies-local-secret")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-DB_PATH = os.getenv("DB_PATH", "amar_veggies.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./amar_veggies.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "10"))
 SHOP_LAT = os.getenv("SHOP_LAT", "")
 SHOP_LNG = os.getenv("SHOP_LNG", "")
 
+# ── Database ──────────────────────────────────────────────────────
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=True)
+    phone = Column(String, unique=True, nullable=True)
+    password = Column(Text, nullable=True)
+    is_admin = Column(Integer, nullable=False, default=0)
+    created_at = Column(String, nullable=False)
+
+class OTP(Base):
+    __tablename__ = "otps"
+    id = Column(String, primary_key=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    otp = Column(String, nullable=False)
+    purpose = Column(String, nullable=False, default="register")
+    expires_at = Column(String, nullable=False)
+    created_at = Column(String, nullable=False)
+
+class Product(Base):
+    __tablename__ = "products"
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, default="")
+    emoji = Column(String, default="🌿")
+    category = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    unit = Column(String, nullable=False)
+    stock = Column(Integer, nullable=False)
+    available = Column(Integer, nullable=False, default=1)
+    featured = Column(Integer, nullable=False, default=0)
+    quantity_options = Column(Text, nullable=False, default="[100,250,500,1000]")
+    image_data = Column(Text, nullable=True)
+    created_at = Column(String, nullable=False)
+
+class Order(Base):
+    __tablename__ = "orders"
+    id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=False)
+    user_name = Column(String, nullable=False)
+    user_email = Column(String, nullable=False)
+    items = Column(Text, nullable=False)
+    address = Column(Text, nullable=False)
+    phone = Column(String, nullable=False)
+    slot = Column(String, nullable=False)
+    notes = Column(Text, default="")
+    delivery_lat = Column(Float, nullable=True)
+    delivery_lng = Column(Float, nullable=True)
+    delivery_place_id = Column(Text, default="")
+    delivery_maps_url = Column(Text, default="")
+    subtotal = Column(Float, nullable=False)
+    delivery = Column(Float, nullable=False)
+    total = Column(Float, nullable=False)
+    payment = Column(String, nullable=False, default="Cash on Delivery")
+    status = Column(String, nullable=False, default="pending")
+    timeline = Column(Text, nullable=False)
+    created_at = Column(String, nullable=False)
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database ready")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 # ── App ───────────────────────────────────────────────────────────
-app = FastAPI(title="Amar Veggies Local API", version="1.0.0")
+app = FastAPI(title="Amar Veggies API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://amarveggies.netlify.app",
         "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── SQLite helpers ────────────────────────────────────────────────
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+# ── Helpers ───────────────────────────────────────────────────────
 def now_iso():
     return datetime.utcnow().isoformat()
 
@@ -82,20 +157,10 @@ def normalize_phone(phone: Optional[str]):
 def make_otp():
     return str(random.randint(100000, 999999))
 
-def public_user(user):
-    data = {k: user.get(k) for k in ("id", "name", "email", "phone", "is_admin") if k in user}
-    email = data.get("email") or ""
-    if email.startswith("phone_") and email.endswith("@mobile.local"):
-        email = ""
-    data["email"] = email
-    data["phone"] = data.get("phone") or ""
-    data["is_admin"] = bool(data.get("is_admin"))
-    return data
-
-def row_to_dict(row):
-    if row is None:
+def model_to_dict(obj):
+    if obj is None:
         return None
-    d = dict(row)
+    d = {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
     for key in ("items", "timeline", "quantity_options"):
         if key in d and isinstance(d[key], str):
             try:
@@ -110,95 +175,55 @@ def row_to_dict(row):
         d["featured"] = bool(d["featured"])
     return d
 
-def rows_to_list(rows):
-    return [row_to_dict(r) for r in rows]
+def models_to_list(rows):
+    return [model_to_dict(r) for r in rows]
 
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE,
-            phone TEXT UNIQUE,
-            password TEXT,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-    """)
-    # Lightweight migrations for older local databases
-    existing_user_cols = [r[1] for r in cur.execute("PRAGMA table_info(users)").fetchall()]
-    if "phone" not in existing_user_cols:
-        cur.execute("ALTER TABLE users ADD COLUMN phone TEXT")
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS otps (
-            id TEXT PRIMARY KEY,
-            email TEXT,
-            phone TEXT,
-            otp TEXT NOT NULL,
-            purpose TEXT NOT NULL DEFAULT 'register',
-            expires_at TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            emoji TEXT DEFAULT '🌿',
-            category TEXT NOT NULL,
-            price REAL NOT NULL,
-            unit TEXT NOT NULL,
-            stock INTEGER NOT NULL,
-            available INTEGER NOT NULL DEFAULT 1,
-            featured INTEGER NOT NULL DEFAULT 0,
-            quantity_options TEXT NOT NULL DEFAULT '[100,250,500,1000]',
-            image_data TEXT,
-            created_at TEXT NOT NULL
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            user_name TEXT NOT NULL,
-            user_email TEXT NOT NULL,
-            items TEXT NOT NULL,
-            address TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            slot TEXT NOT NULL,
-            notes TEXT DEFAULT '',
-            delivery_lat REAL,
-            delivery_lng REAL,
-            delivery_place_id TEXT DEFAULT '',
-            delivery_maps_url TEXT DEFAULT '',
-            subtotal REAL NOT NULL,
-            delivery REAL NOT NULL,
-            total REAL NOT NULL,
-            payment TEXT NOT NULL DEFAULT 'Cash on Delivery',
-            status TEXT NOT NULL DEFAULT 'pending',
-            timeline TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-    existing_order_cols = [r[1] for r in cur.execute("PRAGMA table_info(orders)").fetchall()]
-    order_migrations = {
-        "delivery_lat": "ALTER TABLE orders ADD COLUMN delivery_lat REAL",
-        "delivery_lng": "ALTER TABLE orders ADD COLUMN delivery_lng REAL",
-        "delivery_place_id": "ALTER TABLE orders ADD COLUMN delivery_place_id TEXT DEFAULT ''",
-        "delivery_maps_url": "ALTER TABLE orders ADD COLUMN delivery_maps_url TEXT DEFAULT ''",
+def public_user(user):
+    data = {
+        "id": user.get("id"),
+        "name": user.get("name"),
+        "email": user.get("email") or "",
+        "phone": user.get("phone") or "",
+        "is_admin": bool(user.get("is_admin")),
     }
-    for col, ddl in order_migrations.items():
-        if col not in existing_order_cols:
-            cur.execute(ddl)
+    if data["email"].startswith("phone_") and data["email"].endswith("@mobile.local"):
+        data["email"] = ""
+    return data
 
-    conn.commit()
-    conn.close()
-    print(f"✅ SQLite ready: {DB_PATH}")
+def make_maps_url(lat: Optional[float], lng: Optional[float], address: Optional[str] = None):
+    if lat is not None and lng is not None:
+        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+    if address:
+        from urllib.parse import quote_plus
+        return f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}"
+    return ""
+
+def make_directions_url(lat: Optional[float], lng: Optional[float], address: Optional[str] = None):
+    destination = f"{lat},{lng}" if lat is not None and lng is not None else (address or "")
+    if not destination:
+        return ""
+    from urllib.parse import quote_plus
+    origin = ""
+    if SHOP_LAT and SHOP_LNG:
+        origin = f"&origin={quote_plus(SHOP_LAT + ',' + SHOP_LNG)}"
+    return f"https://www.google.com/maps/dir/?api=1{origin}&destination={quote_plus(destination)}&travelmode=driving"
+
+def split_identifier(identifier: Optional[str] = None, email: Optional[str] = None, phone: Optional[str] = None):
+    value = (identifier or "").strip()
+    if value and "@" in value:
+        email = value
+    elif value:
+        phone = value
+    email = normalize_email(email)
+    phone = normalize_phone(phone)
+    return email, phone
+
+def get_user_by_email_or_phone(db: Session, email: Optional[str], phone: Optional[str]):
+    if email:
+        return db.query(User).filter(User.email == email).first()
+    if phone:
+        return db.query(User).filter(User.phone == phone).first()
+    return None
 
 # ── Security ──────────────────────────────────────────────────────
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -220,13 +245,11 @@ def decode_token(token: str):
     except JWTError:
         return None
 
-def get_user_by_id(user_id: str):
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    conn.close()
-    return row_to_dict(user)
+def get_user_by_id(db: Session, user_id: str):
+    user = db.query(User).filter(User.id == user_id).first()
+    return model_to_dict(user)
 
-def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)):
+def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)):
     if not creds:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = decode_token(creds.credentials)
@@ -235,7 +258,7 @@ def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     user_id = payload.get("sub")
     if not isinstance(user_id, str):
         raise HTTPException(status_code=401, detail="Invalid token")
-    user = get_user_by_id(user_id)
+    user = get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
@@ -252,9 +275,8 @@ class RegisterIn(BaseModel):
     password: str
 
 class LoginIn(BaseModel):
-    # User can log in with either Gmail/email or mobile number as their user ID.
     identifier: Optional[str] = None
-    email: Optional[str] = None  # kept for backward compatibility
+    email: Optional[str] = None
     phone: Optional[str] = None
     password: str
 
@@ -326,138 +348,93 @@ def seed_admin():
     if not ADMIN_EMAIL or not ADMIN_PASSWORD:
         print("⚠️ Admin env vars missing, skipping seed admin")
         return
-    conn = get_db()
-    existing = conn.execute("SELECT id FROM users WHERE email = ?", (ADMIN_EMAIL,)).fetchone()
-    if not existing:
-        conn.execute(
-            "INSERT INTO users (id, name, email, phone, password, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), "Admin", ADMIN_EMAIL, None, hash_password(ADMIN_PASSWORD), 1, now_iso()),
-        )
-        conn.commit()
-        print("✅ Seeded admin")
-    else:
-        conn.execute(
-            "UPDATE users SET password = ?, is_admin = 1 WHERE email = ?",
-            (hash_password(ADMIN_PASSWORD), ADMIN_EMAIL),
-        )
-        conn.commit()
-        print("✅ Admin password updated")
-    conn.close()
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == normalize_email(ADMIN_EMAIL)).first()
+        if not existing:
+            db.add(User(
+                id=str(uuid.uuid4()),
+                name="Admin",
+                email=normalize_email(ADMIN_EMAIL),
+                phone=None,
+                password=hash_password(ADMIN_PASSWORD),
+                is_admin=1,
+                created_at=now_iso(),
+            ))
+            print("✅ Seeded admin")
+        else:
+            existing.password = hash_password(ADMIN_PASSWORD)
+            existing.is_admin = 1
+            print("✅ Admin password updated")
+        db.commit()
+    finally:
+        db.close()
 
 init_db()
 seed_admin()
 
-
-def split_identifier(identifier: Optional[str] = None, email: Optional[str] = None, phone: Optional[str] = None):
-    value = (identifier or "").strip()
-    if value and "@" in value:
-        email = value
-    elif value:
-        phone = value
-    email = normalize_email(email)
-    phone = normalize_phone(phone)
-    return email, phone
-
-def get_user_by_email_or_phone(conn, email: Optional[str], phone: Optional[str]):
-    if email:
-        return conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if phone:
-        return conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
-    return None
-
-def make_maps_url(lat: Optional[float], lng: Optional[float], address: Optional[str] = None):
-    if lat is not None and lng is not None:
-        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
-    if address:
-        from urllib.parse import quote_plus
-        return f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}"
-    return ""
-
-def make_directions_url(lat: Optional[float], lng: Optional[float], address: Optional[str] = None):
-    destination = f"{lat},{lng}" if lat is not None and lng is not None else (address or "")
-    if not destination:
-        return ""
-    from urllib.parse import quote_plus
-    origin = ""
-    if SHOP_LAT and SHOP_LNG:
-        origin = f"&origin={quote_plus(SHOP_LAT + ',' + SHOP_LNG)}"
-    return f"https://www.google.com/maps/dir/?api=1{origin}&destination={quote_plus(destination)}&travelmode=driving"
-
 # ── Auth ──────────────────────────────────────────────────────────
 @app.post("/api/auth/register")
-def register(body: RegisterIn):
-    # Old password registration is kept for admin/backward compatibility.
-    # New customers should use /send-otp and /verify-otp-register.
+def register(body: RegisterIn, db: Session = Depends(get_db)):
     email = normalize_email(body.email)
     if not email:
         raise HTTPException(400, "Email is required")
-    conn = get_db()
-    if conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone():
-        conn.close()
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email already registered")
-    user = {
-        "id": str(uuid.uuid4()),
-        "name": body.name.strip(),
-        "email": email,
-        "phone": "",
-        "password": hash_password(body.password),
-        "is_admin": False,
-        "created_at": now_iso(),
-    }
-    conn.execute(
-        "INSERT INTO users (id, name, email, phone, password, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user["id"], user["name"], user["email"], None, user["password"], 0, user["created_at"]),
+    user = User(
+        id=str(uuid.uuid4()),
+        name=body.name.strip(),
+        email=email,
+        phone=None,
+        password=hash_password(body.password),
+        is_admin=0,
+        created_at=now_iso(),
     )
-    conn.commit()
-    conn.close()
-    token = create_token({"sub": user["id"]})
-    return {"token": token, "user": public_user(user)}
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, "Email already registered")
+    token = create_token({"sub": user.id})
+    return {"token": token, "user": public_user(model_to_dict(user))}
 
 @app.post("/api/auth/send-otp")
-def send_otp(body: SendOtpIn):
+def send_otp(body: SendOtpIn, db: Session = Depends(get_db)):
     email = normalize_email(body.email)
     phone = normalize_phone(body.phone)
-
     if not email and not phone:
         raise HTTPException(400, "Enter an email or mobile number")
     if phone and len(phone) != 10:
         raise HTTPException(400, "Enter a valid 10-digit mobile number")
-
-    conn = get_db()
-    if email and conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone():
-        conn.close()
+    if email and db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email already registered")
-    if phone and conn.execute("SELECT id FROM users WHERE phone = ?", (phone,)).fetchone():
-        conn.close()
+    if phone and db.query(User).filter(User.phone == phone).first():
         raise HTTPException(400, "Mobile number already registered")
-
-    otp = make_otp()
-    expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
-
     if email:
-        conn.execute("DELETE FROM otps WHERE email = ? AND purpose = 'register'", (email,))
+        db.query(OTP).filter(OTP.email == email, OTP.purpose == "register").delete()
     if phone:
-        conn.execute("DELETE FROM otps WHERE phone = ? AND purpose = 'register'", (phone,))
-
-    conn.execute(
-        "INSERT INTO otps (id, email, phone, otp, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), email, phone, otp, "register", expires_at, now_iso()),
-    )
-    conn.commit()
-    conn.close()
-
-    # Local development: the OTP is returned so you can test without paying for SMS/email services.
-    # In production, send this OTP using an email/SMS provider and remove dev_otp from the response.
+        db.query(OTP).filter(OTP.phone == phone, OTP.purpose == "register").delete()
+    otp = make_otp()
+    db.add(OTP(
+        id=str(uuid.uuid4()),
+        email=email,
+        phone=phone,
+        otp=otp,
+        purpose="register",
+        expires_at=(datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat(),
+        created_at=now_iso(),
+    ))
+    db.commit()
     return {"ok": True, "message": "OTP sent", "dev_otp": otp, "expires_in_minutes": OTP_EXPIRE_MINUTES}
 
 @app.post("/api/auth/verify-otp-register")
-def verify_otp_register(body: VerifyOtpRegisterIn):
+def verify_otp_register(body: VerifyOtpRegisterIn, db: Session = Depends(get_db)):
     name = body.name.strip()
     email = normalize_email(body.email)
     phone = normalize_phone(body.phone)
     otp = body.otp.strip()
     password = body.password.strip()
-
     if not name:
         raise HTTPException(400, "Full name is required")
     if not email and not phone:
@@ -466,202 +443,142 @@ def verify_otp_register(body: VerifyOtpRegisterIn):
         raise HTTPException(400, "Enter a valid 10-digit mobile number")
     if len(password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
-
-    conn = get_db()
-    if email and conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone():
-        conn.close()
+    if email and db.query(User).filter(User.email == email).first():
         raise HTTPException(400, "Email already registered")
-    if phone and conn.execute("SELECT id FROM users WHERE phone = ?", (phone,)).fetchone():
-        conn.close()
+    if phone and db.query(User).filter(User.phone == phone).first():
         raise HTTPException(400, "Mobile number already registered")
 
-    if email:
-        row = conn.execute(
-            "SELECT * FROM otps WHERE email = ? AND purpose = 'register' ORDER BY created_at DESC LIMIT 1",
-            (email,),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT * FROM otps WHERE phone = ? AND purpose = 'register' ORDER BY created_at DESC LIMIT 1",
-            (phone,),
-        ).fetchone()
-
-    otp_doc = row_to_dict(row)
-    if not otp_doc:
-        conn.close()
+    q = db.query(OTP).filter(OTP.purpose == "register")
+    q = q.filter(OTP.email == email) if email else q.filter(OTP.phone == phone)
+    otp_row = q.order_by(OTP.created_at.desc()).first()
+    if not otp_row:
         raise HTTPException(400, "OTP not found. Please request a new OTP")
-    if datetime.fromisoformat(otp_doc["expires_at"]) < datetime.utcnow():
-        conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
-        conn.commit()
-        conn.close()
+    if datetime.fromisoformat(otp_row.expires_at) < datetime.utcnow():
+        db.delete(otp_row)
+        db.commit()
         raise HTTPException(400, "OTP expired. Please request a new OTP")
-    if otp_doc["otp"] != otp:
-        conn.close()
+    if otp_row.otp != otp:
         raise HTTPException(400, "Invalid OTP")
 
     stored_email = email or f"phone_{phone}@mobile.local"
-    user = {
-        "id": str(uuid.uuid4()),
-        "name": name,
-        "email": stored_email,
-        "phone": phone or "",
-        "password": hash_password(password),
-        "is_admin": False,
-        "created_at": now_iso(),
-    }
-    conn.execute(
-        "INSERT INTO users (id, name, email, phone, password, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user["id"], user["name"], stored_email, phone, user["password"], 0, user["created_at"]),
+    user = User(
+        id=str(uuid.uuid4()),
+        name=name,
+        email=stored_email,
+        phone=phone,
+        password=hash_password(password),
+        is_admin=0,
+        created_at=now_iso(),
     )
-    conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
-    conn.commit()
-    conn.close()
-
-    token = create_token({"sub": user["id"]})
-    return {"token": token, "user": public_user(user)}
+    db.add(user)
+    db.delete(otp_row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, "Account already registered")
+    token = create_token({"sub": user.id})
+    return {"token": token, "user": public_user(model_to_dict(user))}
 
 @app.post("/api/auth/send-login-otp")
-def send_login_otp(body: SendLoginOtpIn):
+def send_login_otp(body: SendLoginOtpIn, db: Session = Depends(get_db)):
     email = normalize_email(body.email)
     phone = normalize_phone(body.phone)
-
     if not email and not phone:
         raise HTTPException(400, "Enter an email or mobile number")
     if phone and len(phone) != 10:
         raise HTTPException(400, "Enter a valid 10-digit mobile number")
-
-    conn = get_db()
-    if email:
-        user_exists = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-    else:
-        user_exists = conn.execute("SELECT id FROM users WHERE phone = ?", (phone,)).fetchone()
-
+    user_exists = get_user_by_email_or_phone(db, email, phone)
     if not user_exists:
-        conn.close()
         raise HTTPException(404, "Account not found. Please register first")
-
-    otp = make_otp()
-    expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
-
     if email:
-        conn.execute("DELETE FROM otps WHERE email = ? AND purpose = 'login'", (email,))
+        db.query(OTP).filter(OTP.email == email, OTP.purpose == "login").delete()
     if phone:
-        conn.execute("DELETE FROM otps WHERE phone = ? AND purpose = 'login'", (phone,))
-
-    conn.execute(
-        "INSERT INTO otps (id, email, phone, otp, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), email, phone, otp, "login", expires_at, now_iso()),
-    )
-    conn.commit()
-    conn.close()
-
-    # Local development: shown to you for testing. Replace with SMS/email sending in production.
+        db.query(OTP).filter(OTP.phone == phone, OTP.purpose == "login").delete()
+    otp = make_otp()
+    db.add(OTP(
+        id=str(uuid.uuid4()),
+        email=email,
+        phone=phone,
+        otp=otp,
+        purpose="login",
+        expires_at=(datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat(),
+        created_at=now_iso(),
+    ))
+    db.commit()
     return {"ok": True, "message": "OTP sent", "dev_otp": otp, "expires_in_minutes": OTP_EXPIRE_MINUTES}
 
 @app.post("/api/auth/verify-otp-login")
-def verify_otp_login(body: VerifyOtpLoginIn):
+def verify_otp_login(body: VerifyOtpLoginIn, db: Session = Depends(get_db)):
     email = normalize_email(body.email)
     phone = normalize_phone(body.phone)
     otp = body.otp.strip()
-
     if not email and not phone:
         raise HTTPException(400, "Enter an email or mobile number")
     if phone and len(phone) != 10:
         raise HTTPException(400, "Enter a valid 10-digit mobile number")
-
-    conn = get_db()
-    if email:
-        user_row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        otp_row = conn.execute(
-            "SELECT * FROM otps WHERE email = ? AND purpose = 'login' ORDER BY created_at DESC LIMIT 1",
-            (email,),
-        ).fetchone()
-    else:
-        user_row = conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
-        otp_row = conn.execute(
-            "SELECT * FROM otps WHERE phone = ? AND purpose = 'login' ORDER BY created_at DESC LIMIT 1",
-            (phone,),
-        ).fetchone()
-
-    user = row_to_dict(user_row)
-    otp_doc = row_to_dict(otp_row)
+    user = get_user_by_email_or_phone(db, email, phone)
+    q = db.query(OTP).filter(OTP.purpose == "login")
+    q = q.filter(OTP.email == email) if email else q.filter(OTP.phone == phone)
+    otp_row = q.order_by(OTP.created_at.desc()).first()
     if not user:
-        conn.close()
         raise HTTPException(404, "Account not found. Please register first")
-    if not otp_doc:
-        conn.close()
+    if not otp_row:
         raise HTTPException(400, "OTP not found. Please request a new OTP")
-    if datetime.fromisoformat(otp_doc["expires_at"]) < datetime.utcnow():
-        conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
-        conn.commit()
-        conn.close()
+    if datetime.fromisoformat(otp_row.expires_at) < datetime.utcnow():
+        db.delete(otp_row)
+        db.commit()
         raise HTTPException(400, "OTP expired. Please request a new OTP")
-    if otp_doc["otp"] != otp:
-        conn.close()
+    if otp_row.otp != otp:
         raise HTTPException(400, "Invalid OTP")
-
-    conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
-    conn.commit()
-    conn.close()
-
-    token = create_token({"sub": user["id"]})
-    return {"token": token, "user": public_user(user)}
+    db.delete(otp_row)
+    db.commit()
+    token = create_token({"sub": user.id})
+    return {"token": token, "user": public_user(model_to_dict(user))}
 
 @app.post("/api/auth/login")
-def login(body: LoginIn):
+def login(body: LoginIn, db: Session = Depends(get_db)):
     identifier = (body.identifier or body.email or body.phone or "").strip()
     if not identifier:
         raise HTTPException(400, "Enter your email or mobile number")
-
     email = normalize_email(identifier) if "@" in identifier else None
     phone = normalize_phone(identifier) if "@" not in identifier else None
-
-    conn = get_db()
-    if email:
-        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    else:
-        row = conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
-    conn.close()
-
-    user = row_to_dict(row)
-    if not user or not user.get("password") or not verify_password(body.password, user["password"]):
+    user = get_user_by_email_or_phone(db, email, phone)
+    user_dict = model_to_dict(user)
+    if not user_dict or not user_dict.get("password") or not verify_password(body.password, user_dict["password"]):
         raise HTTPException(401, "Invalid email/mobile number or password")
-    token = create_token({"sub": user["id"]})
-    return {"token": token, "user": public_user(user)}
-
+    token = create_token({"sub": user_dict["id"]})
+    return {"token": token, "user": public_user(user_dict)}
 
 @app.post("/api/auth/forgot-password/send-otp")
-def forgot_password_send_otp(body: ForgotPasswordSendIn):
+def forgot_password_send_otp(body: ForgotPasswordSendIn, db: Session = Depends(get_db)):
     email, phone = split_identifier(body.identifier, body.email, body.phone)
     if not email and not phone:
         raise HTTPException(400, "Enter your email or mobile number")
     if phone and len(phone) != 10:
         raise HTTPException(400, "Enter a valid 10-digit mobile number")
-
-    conn = get_db()
-    user_row = get_user_by_email_or_phone(conn, email, phone)
-    if not user_row:
-        conn.close()
+    user = get_user_by_email_or_phone(db, email, phone)
+    if not user:
         raise HTTPException(404, "Account not found")
-
-    otp = make_otp()
-    expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
     if email:
-        conn.execute("DELETE FROM otps WHERE email = ? AND purpose = 'reset_password'", (email,))
+        db.query(OTP).filter(OTP.email == email, OTP.purpose == "reset_password").delete()
     if phone:
-        conn.execute("DELETE FROM otps WHERE phone = ? AND purpose = 'reset_password'", (phone,))
-    conn.execute(
-        "INSERT INTO otps (id, email, phone, otp, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), email, phone, otp, "reset_password", expires_at, now_iso()),
-    )
-    conn.commit()
-    conn.close()
-
-    # Local development: show OTP for testing. In production, send this through email/SMS and remove dev_otp.
+        db.query(OTP).filter(OTP.phone == phone, OTP.purpose == "reset_password").delete()
+    otp = make_otp()
+    db.add(OTP(
+        id=str(uuid.uuid4()),
+        email=email,
+        phone=phone,
+        otp=otp,
+        purpose="reset_password",
+        expires_at=(datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat(),
+        created_at=now_iso(),
+    ))
+    db.commit()
     return {"ok": True, "message": "OTP sent", "dev_otp": otp, "expires_in_minutes": OTP_EXPIRE_MINUTES}
 
 @app.post("/api/auth/forgot-password/reset")
-def forgot_password_reset(body: ForgotPasswordResetIn):
+def forgot_password_reset(body: ForgotPasswordResetIn, db: Session = Depends(get_db)):
     email, phone = split_identifier(body.identifier, body.email, body.phone)
     otp = body.otp.strip()
     password = body.password.strip()
@@ -671,46 +588,23 @@ def forgot_password_reset(body: ForgotPasswordResetIn):
         raise HTTPException(400, "Enter a valid 10-digit mobile number")
     if len(password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
-
-    conn = get_db()
-    user_row = get_user_by_email_or_phone(conn, email, phone)
-    if not user_row:
-        conn.close()
-        raise HTTPException(404, "Account not found")
-
-    if email:
-        otp_row = conn.execute(
-            "SELECT * FROM otps WHERE email = ? AND purpose = 'reset_password' ORDER BY created_at DESC LIMIT 1",
-            (email,),
-        ).fetchone()
-    else:
-        otp_row = conn.execute(
-            "SELECT * FROM otps WHERE phone = ? AND purpose = 'reset_password' ORDER BY created_at DESC LIMIT 1",
-            (phone,),
-        ).fetchone()
-    otp_doc = row_to_dict(otp_row)
-    if not otp_doc:
-        conn.close()
-        raise HTTPException(400, "OTP not found. Please request a new OTP")
-    if datetime.fromisoformat(otp_doc["expires_at"]) < datetime.utcnow():
-        conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
-        conn.commit()
-        conn.close()
-        raise HTTPException(400, "OTP expired. Please request a new OTP")
-    if otp_doc["otp"] != otp:
-        conn.close()
-        raise HTTPException(400, "Invalid OTP")
-    user = row_to_dict(user_row)
+    user = get_user_by_email_or_phone(db, email, phone)
     if not user:
-        conn.close()
         raise HTTPException(404, "Account not found")
-    conn.execute(
-        "UPDATE users SET password = ? WHERE id = ?",
-        (hash_password(password), user["id"])
-    )
-    conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
-    conn.commit()
-    conn.close()
+    q = db.query(OTP).filter(OTP.purpose == "reset_password")
+    q = q.filter(OTP.email == email) if email else q.filter(OTP.phone == phone)
+    otp_row = q.order_by(OTP.created_at.desc()).first()
+    if not otp_row:
+        raise HTTPException(400, "OTP not found. Please request a new OTP")
+    if datetime.fromisoformat(otp_row.expires_at) < datetime.utcnow():
+        db.delete(otp_row)
+        db.commit()
+        raise HTTPException(400, "OTP expired. Please request a new OTP")
+    if otp_row.otp != otp:
+        raise HTTPException(400, "Invalid OTP")
+    user.password = hash_password(password)
+    db.delete(otp_row)
+    db.commit()
     return {"ok": True, "message": "Password reset successful"}
 
 @app.get("/api/auth/me")
@@ -719,111 +613,90 @@ def me(user=Depends(get_current_user)):
 
 # ── Products ──────────────────────────────────────────────────────
 @app.get("/api/products")
-def list_products(category: Optional[str] = None, search: Optional[str] = None, featured: Optional[bool] = None):
-    query = "SELECT * FROM products WHERE 1=1"
-    params = []
+def list_products(category: Optional[str] = None, search: Optional[str] = None, featured: Optional[bool] = None, db: Session = Depends(get_db)):
+    q = db.query(Product)
     if category and category != "All":
-        query += " AND category = ?"
-        params.append(category)
+        q = q.filter(Product.category == category)
     if search:
-        query += " AND LOWER(name) LIKE ?"
-        params.append(f"%{search.lower()}%")
+        q = q.filter(Product.name.ilike(f"%{search}%"))
     if featured is not None:
-        query += " AND featured = ?"
-        params.append(1 if featured else 0)
-    query += " ORDER BY created_at DESC"
-    conn = get_db()
-    products = conn.execute(query, params).fetchall()
-    conn.close()
-    return rows_to_list(products)
+        q = q.filter(Product.featured == (1 if featured else 0))
+    return models_to_list(q.order_by(Product.created_at.desc()).all())
 
 @app.get("/api/products/{pid}")
-def get_product(pid: str):
-    conn = get_db()
-    row = conn.execute("SELECT * FROM products WHERE id = ?", (pid,)).fetchone()
-    conn.close()
-    if not row:
+def get_product(pid: str, db: Session = Depends(get_db)):
+    p = db.query(Product).filter(Product.id == pid).first()
+    if not p:
         raise HTTPException(404, "Product not found")
-    return row_to_dict(row)
+    return model_to_dict(p)
 
 @app.post("/api/products", dependencies=[Depends(require_admin)])
-def create_product(body: ProductIn):
+def create_product(body: ProductIn, db: Session = Depends(get_db)):
     p = body.dict()
-    p["id"] = str(uuid.uuid4())
-    p["created_at"] = now_iso()
-    conn = get_db()
-    conn.execute(
-        """
-        INSERT INTO products
-        (id, name, description, emoji, category, price, unit, stock, available, featured, quantity_options, image_data, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            p["id"], p["name"], p.get("description", ""), p.get("emoji", "🌿"), p["category"],
-            p["price"], p["unit"], p["stock"], 1 if p.get("available") else 0,
-            1 if p.get("featured") else 0, json.dumps(p.get("quantity_options") or [100, 250, 500, 1000]),
-            None, p["created_at"]
-        ),
+    product = Product(
+        id=str(uuid.uuid4()),
+        name=p["name"],
+        description=p.get("description", ""),
+        emoji=p.get("emoji", "🌿"),
+        category=p["category"],
+        price=p["price"],
+        unit=p["unit"],
+        stock=p["stock"],
+        available=1 if p.get("available") else 0,
+        featured=1 if p.get("featured") else 0,
+        quantity_options=json.dumps(p.get("quantity_options") or [100, 250, 500, 1000]),
+        image_data=None,
+        created_at=now_iso(),
     )
-    conn.commit()
-    saved = conn.execute("SELECT * FROM products WHERE id = ?", (p["id"],)).fetchone()
-    conn.close()
-    return row_to_dict(saved)
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+    return model_to_dict(product)
 
 @app.put("/api/products/{pid}", dependencies=[Depends(require_admin)])
-def update_product(pid: str, body: ProductIn):
-    conn = get_db()
-    if not conn.execute("SELECT id FROM products WHERE id = ?", (pid,)).fetchone():
-        conn.close()
+def update_product(pid: str, body: ProductIn, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == pid).first()
+    if not product:
         raise HTTPException(404, "Product not found")
     p = body.dict()
-    conn.execute(
-        """
-        UPDATE products SET
-            name = ?, description = ?, emoji = ?, category = ?, price = ?, unit = ?, stock = ?,
-            available = ?, featured = ?, quantity_options = ?
-        WHERE id = ?
-        """,
-        (
-            p["name"], p.get("description", ""), p.get("emoji", "🌿"), p["category"], p["price"],
-            p["unit"], p["stock"], 1 if p.get("available") else 0, 1 if p.get("featured") else 0,
-            json.dumps(p.get("quantity_options") or [100, 250, 500, 1000]), pid
-        ),
-    )
-    conn.commit()
-    saved = conn.execute("SELECT * FROM products WHERE id = ?", (pid,)).fetchone()
-    conn.close()
-    return row_to_dict(saved)
+    product.name = p["name"]
+    product.description = p.get("description", "")
+    product.emoji = p.get("emoji", "🌿")
+    product.category = p["category"]
+    product.price = p["price"]
+    product.unit = p["unit"]
+    product.stock = p["stock"]
+    product.available = 1 if p.get("available") else 0
+    product.featured = 1 if p.get("featured") else 0
+    product.quantity_options = json.dumps(p.get("quantity_options") or [100, 250, 500, 1000])
+    db.commit()
+    db.refresh(product)
+    return model_to_dict(product)
 
 @app.delete("/api/products/{pid}", dependencies=[Depends(require_admin)])
-def delete_product(pid: str):
-    conn = get_db()
-    cur = conn.execute("DELETE FROM products WHERE id = ?", (pid,))
-    conn.commit()
-    conn.close()
-    if cur.rowcount == 0:
+def delete_product(pid: str, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == pid).first()
+    if not product:
         raise HTTPException(404, "Product not found")
+    db.delete(product)
+    db.commit()
     return {"ok": True}
 
 # ── Orders ────────────────────────────────────────────────────────
 ORDER_STATUSES = ["pending", "confirmed", "packed", "out_for_delivery", "delivered", "cancelled"]
 
 @app.post("/api/orders")
-def create_order(body: OrderIn, user=Depends(get_current_user)):
-    conn = get_db()
+def create_order(body: OrderIn, user=Depends(get_current_user), db: Session = Depends(get_db)):
     items_detail = []
     subtotal = 0
     for ci in body.items:
-        row = conn.execute("SELECT * FROM products WHERE id = ?", (ci.product_id,)).fetchone()
-        p = row_to_dict(row)
+        product = db.query(Product).filter(Product.id == ci.product_id).first()
+        p = model_to_dict(product)
         if not p:
-            conn.close()
             raise HTTPException(400, f"Product {ci.product_id} not found")
         if not p.get("available"):
-            conn.close()
             raise HTTPException(400, f"{p['name']} is unavailable")
         if ci.selected_weight not in p.get("quantity_options", [100, 250, 500, 1000]):
-            conn.close()
             raise HTTPException(400, f"Invalid weight option for {p['name']}")
         weight = ci.selected_weight or 1000
         line_total = round(p["price"] * (weight / 1000) * ci.quantity, 2)
@@ -838,98 +711,81 @@ def create_order(body: OrderIn, user=Depends(get_current_user)):
             "line_total": line_total,
             "selected_weight": ci.selected_weight,
         })
+
     delivery = 0 if subtotal >= 300 else 40
-    order = {
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "user_name": user["name"],
-        "user_email": public_user(user).get("email", ""),
-        "items": items_detail,
-        "address": body.address,
-        "phone": body.phone,
-        "slot": body.slot,
-        "notes": body.notes or "",
-        "delivery_lat": body.delivery_lat,
-        "delivery_lng": body.delivery_lng,
-        "delivery_place_id": body.delivery_place_id or "",
-        "delivery_maps_url": make_maps_url(body.delivery_lat, body.delivery_lng, body.address),
-        "delivery_directions_url": make_directions_url(body.delivery_lat, body.delivery_lng, body.address),
-        "subtotal": round(subtotal, 2),
-        "delivery": delivery,
-        "total": round(subtotal + delivery, 2),
-        "payment": "Cash on Delivery",
-        "status": "pending",
-        "timeline": [{"status": "pending", "at": now_iso()}],
-        "created_at": now_iso(),
-    }
-    conn.execute(
-        """
-        INSERT INTO orders
-        (id, user_id, user_name, user_email, items, address, phone, slot, notes, delivery_lat, delivery_lng, delivery_place_id, delivery_maps_url, subtotal, delivery, total, payment, status, timeline, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            order["id"], order["user_id"], order["user_name"], order["user_email"], json.dumps(order["items"]),
-            order["address"], order["phone"], order["slot"], order["notes"], order["delivery_lat"], order["delivery_lng"],
-            order["delivery_place_id"], order["delivery_maps_url"], order["subtotal"], order["delivery"],
-            order["total"], order["payment"], order["status"], json.dumps(order["timeline"]), order["created_at"]
-        ),
+    timeline = [{"status": "pending", "at": now_iso()}]
+    order = Order(
+        id=str(uuid.uuid4()),
+        user_id=user["id"],
+        user_name=user["name"],
+        user_email=public_user(user).get("email", ""),
+        items=json.dumps(items_detail),
+        address=body.address,
+        phone=body.phone,
+        slot=body.slot,
+        notes=body.notes or "",
+        delivery_lat=body.delivery_lat,
+        delivery_lng=body.delivery_lng,
+        delivery_place_id=body.delivery_place_id or "",
+        delivery_maps_url=make_maps_url(body.delivery_lat, body.delivery_lng, body.address),
+        subtotal=round(subtotal, 2),
+        delivery=delivery,
+        total=round(subtotal + delivery, 2),
+        payment="Cash on Delivery",
+        status="pending",
+        timeline=json.dumps(timeline),
+        created_at=now_iso(),
     )
-    conn.commit()
-    conn.close()
-    return order
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    result = model_to_dict(order)
+    result["delivery_directions_url"] = make_directions_url(body.delivery_lat, body.delivery_lng, body.address)
+    return result
 
 @app.get("/api/orders")
-def list_orders(user=Depends(get_current_user)):
-    conn = get_db()
+def list_orders(user=Depends(get_current_user), db: Session = Depends(get_db)):
     if user.get("is_admin"):
-        rows = conn.execute("SELECT * FROM orders ORDER BY created_at DESC").fetchall()
+        rows = db.query(Order).order_by(Order.created_at.desc()).all()
     else:
-        rows = conn.execute("SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()
-    conn.close()
-    return rows_to_list(rows)
+        rows = db.query(Order).filter(Order.user_id == user["id"]).order_by(Order.created_at.desc()).all()
+    return models_to_list(rows)
 
 @app.get("/api/orders/{oid}")
-def get_order(oid: str, user=Depends(get_current_user)):
-    conn = get_db()
-    row = conn.execute("SELECT * FROM orders WHERE id = ?", (oid,)).fetchone()
-    conn.close()
-    order = row_to_dict(row)
-    if not order:
+def get_order(oid: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == oid).first()
+    order_dict = model_to_dict(order)
+    if not order_dict:
         raise HTTPException(404, "Order not found")
-    if not user.get("is_admin") and order["user_id"] != user["id"]:
+    if not user.get("is_admin") and order_dict["user_id"] != user["id"]:
         raise HTTPException(403, "Access denied")
-    return order
+    return order_dict
 
 @app.put("/api/orders/{oid}/status", dependencies=[Depends(require_admin)])
-def update_order_status(oid: str, body: OrderStatusIn):
+def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get_db)):
     if body.status not in ORDER_STATUSES:
         raise HTTPException(400, f"Invalid status. Valid: {ORDER_STATUSES}")
-    conn = get_db()
-    row = conn.execute("SELECT * FROM orders WHERE id = ?", (oid,)).fetchone()
-    order = row_to_dict(row)
+    order = db.query(Order).filter(Order.id == oid).first()
     if not order:
-        conn.close()
         raise HTTPException(404, "Order not found")
-    timeline = order.get("timeline", [])
+    order_dict = model_to_dict(order)
+    timeline = order_dict.get("timeline", [])
     timeline.append({"status": body.status, "at": now_iso()})
-    conn.execute("UPDATE orders SET status = ?, timeline = ? WHERE id = ?", (body.status, json.dumps(timeline), oid))
-    conn.commit()
-    saved = conn.execute("SELECT * FROM orders WHERE id = ?", (oid,)).fetchone()
-    conn.close()
-    return row_to_dict(saved)
+    order.status = body.status
+    order.timeline = json.dumps(timeline)
+    db.commit()
+    db.refresh(order)
+    return model_to_dict(order)
 
 # ── Admin stats ───────────────────────────────────────────────────
 @app.get("/api/admin/stats", dependencies=[Depends(require_admin)])
-def admin_stats():
-    conn = get_db()
-    total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
-    pending_orders = conn.execute("SELECT COUNT(*) FROM orders WHERE status = 'pending'").fetchone()[0]
-    total_products = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-    avail_products = conn.execute("SELECT COUNT(*) FROM products WHERE available = 1").fetchone()[0]
-    revenue = conn.execute("SELECT COALESCE(SUM(total), 0) FROM orders WHERE status != 'cancelled'").fetchone()[0]
-    total_users = conn.execute("SELECT COUNT(*) FROM users WHERE is_admin = 0").fetchone()[0]
-    conn.close()
+def admin_stats(db: Session = Depends(get_db)):
+    total_orders = db.query(Order).count()
+    pending_orders = db.query(Order).filter(Order.status == "pending").count()
+    total_products = db.query(Product).count()
+    avail_products = db.query(Product).filter(Product.available == 1).count()
+    total_users = db.query(User).filter(User.is_admin == 0).count()
+    revenue = sum([o.total or 0 for o in db.query(Order).filter(Order.status != "cancelled").all()])
     return {
         "total_orders": total_orders,
         "pending_orders": pending_orders,
@@ -942,41 +798,36 @@ def admin_stats():
 # ── Health ────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "Amar Veggies Local SQLite API", "database": DB_PATH, "shop_location_configured": bool(SHOP_LAT and SHOP_LNG)}
+    db_type = "postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite"
+    return {"status": "ok", "service": "Amar Veggies SQLAlchemy API", "database": db_type, "shop_location_configured": bool(SHOP_LAT and SHOP_LNG)}
 
 # ── Product images ────────────────────────────────────────────────
 @app.post("/api/products/{pid}/image", dependencies=[Depends(require_admin)])
-async def upload_product_image(pid: str, file: UploadFile = File(...)):
-    conn = get_db()
-    row = conn.execute("SELECT id FROM products WHERE id = ?", (pid,)).fetchone()
-    if not row:
-        conn.close()
+async def upload_product_image(pid: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == pid).first()
+    if not product:
         raise HTTPException(404, "Product not found")
     if not file.content_type or not file.content_type.startswith("image/"):
-        conn.close()
         raise HTTPException(400, "File must be an image (jpg, png, webp, etc.)")
     contents = await file.read()
     if len(contents) > 5 * 1024 * 1024:
-        conn.close()
         raise HTTPException(400, "Image must be under 5MB")
     b64 = base64.b64encode(contents).decode("utf-8")
     image_data = f"data:{file.content_type};base64,{b64}"
-    conn.execute("UPDATE products SET image_data = ? WHERE id = ?", (image_data, pid))
-    conn.commit()
-    conn.close()
+    product.image_data = image_data
+    db.commit()
     return {"ok": True, "image_data": image_data}
 
 @app.delete("/api/products/{pid}/image", dependencies=[Depends(require_admin)])
-def delete_product_image(pid: str):
-    conn = get_db()
-    cur = conn.execute("UPDATE products SET image_data = NULL WHERE id = ?", (pid,))
-    conn.commit()
-    conn.close()
-    if cur.rowcount == 0:
+def delete_product_image(pid: str, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == pid).first()
+    if not product:
         raise HTTPException(404, "Product not found")
+    product.image_data = None
+    db.commit()
     return {"ok": True}
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("server:app", host="127.0.0.1", port=port, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
