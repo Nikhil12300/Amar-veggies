@@ -347,6 +347,24 @@ async function apiFetch(path, opts = {}) {
   return data;
 }
 
+async function getPreviousCheckoutDetails() {
+  const orders = await apiFetch("/orders");
+  if (!Array.isArray(orders) || orders.length === 0) return null;
+
+  const latest = orders.find(o => o && (o.address || o.phone || o.delivery_lat || o.delivery_lng));
+  if (!latest) return null;
+
+  return {
+    address: latest.address || "",
+    phone: latest.phone || "",
+    slot: latest.slot || "",
+    notes: latest.notes || "",
+    delivery_lat: latest.delivery_lat ?? null,
+    delivery_lng: latest.delivery_lng ?? null,
+    delivery_place_id: latest.delivery_place_id || ""
+  };
+}
+
 /* ═══════════════════════════════════════════════════════════
    CONTEXTS
 ═══════════════════════════════════════════════════════════ */
@@ -1056,6 +1074,42 @@ function CheckoutPage() {
   const [form, setForm] = useState({address:"",phone:"",slot:"",notes:"",delivery_lat:null,delivery_lng:null,delivery_place_id:""});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [prefillMsg, setPrefillMsg] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPreviousCheckoutDetails() {
+      if (!user) return;
+      try {
+        const previous = await getPreviousCheckoutDetails();
+        if (cancelled || !previous) return;
+
+        let loaded = false;
+        setForm(prev => {
+          const next = {
+            ...prev,
+            phone: prev.phone || previous.phone || user.phone || "",
+            address: prev.address || previous.address || "",
+            slot: prev.slot || previous.slot || "",
+            notes: prev.notes || previous.notes || "",
+            delivery_lat: prev.delivery_lat ?? previous.delivery_lat,
+            delivery_lng: prev.delivery_lng ?? previous.delivery_lng,
+            delivery_place_id: prev.delivery_place_id || previous.delivery_place_id || ""
+          };
+          loaded = Boolean(next.phone || next.address || next.delivery_lat || next.delivery_lng);
+          return next;
+        });
+        if (loaded) setPrefillMsg("Previous checkout details loaded. You can edit them before placing this order.");
+      } catch (e) {
+        if (!cancelled && user?.phone) {
+          setForm(prev => ({...prev, phone: prev.phone || user.phone || ""}));
+        }
+      }
+    }
+
+    loadPreviousCheckoutDetails();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   if (!user) { nav("login"); return null; }
   if (items.length === 0) { nav("cart"); return null; }
@@ -1085,6 +1139,7 @@ function CheckoutPage() {
         <div>
           <div style={{background:"var(--white)",borderRadius:"var(--r)",border:"1.5px solid var(--border)",padding:"1.5rem",marginBottom:"1.5rem"}}>
             <h3 className="section-title mb-2" style={{fontSize:"1.3rem"}}>Delivery Details</h3>
+            {prefillMsg && <div className="form-ok">{prefillMsg}</div>}
             {err && <div className="form-err">{err}</div>}
             <div className="field"><label>Phone Number *</label><input placeholder="e.g. 98765 43210" value={form.phone} onChange={e => setForm(f=>({...f,phone:e.target.value}))}/></div>
             <div className="field"><label>Delivery Address *</label><textarea placeholder="House no., Street, Area, Pincode" rows={3} value={form.address} onChange={e => setForm(f=>({...f,address:e.target.value}))}/></div>
