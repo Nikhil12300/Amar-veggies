@@ -36,8 +36,8 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
 DB_PATH = os.getenv("DB_PATH", "amar_veggies.db")
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@amarveggies.com")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "10"))
 SHOP_LAT = os.getenv("SHOP_LAT", "")
 SHOP_LNG = os.getenv("SHOP_LNG", "")
@@ -46,7 +46,10 @@ SHOP_LNG = os.getenv("SHOP_LNG", "")
 app = FastAPI(title="Amar Veggies Local API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://amarveggies.netlify.app",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -697,9 +700,14 @@ def forgot_password_reset(body: ForgotPasswordResetIn):
     if otp_doc["otp"] != otp:
         conn.close()
         raise HTTPException(400, "Invalid OTP")
-
     user = row_to_dict(user_row)
-    conn.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(password), user["id"]))
+    if not user:
+        conn.close()
+        raise HTTPException(404, "Account not found")
+    conn.execute(
+        "UPDATE users SET password = ? WHERE id = ?",
+        (hash_password(password), user["id"])
+    )
     conn.execute("DELETE FROM otps WHERE id = ?", (otp_doc["id"],))
     conn.commit()
     conn.close()
