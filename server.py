@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any, Dict, cast
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -37,8 +37,17 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./amar_veggies.db")
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgres://",
+        "postgresql+psycopg://",
+        1
+    )
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql://",
+        "postgresql+psycopg://",
+        1
+    )
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "10"))
@@ -157,16 +166,23 @@ def normalize_phone(phone: Optional[str]):
 def make_otp():
     return str(random.randint(100000, 999999))
 
-def model_to_dict(obj):
+def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
     if obj is None:
         return None
-    d = {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+    table = getattr(obj, "__table__", None)
+    if table is None:
+        return None
+
+    d: Dict[str, Any] = {c.name: getattr(obj, c.name) for c in table.columns}
     for key in ("items", "timeline", "quantity_options"):
-        if key in d and isinstance(d[key], str):
+        value = d.get(key)
+        if isinstance(value, str):
             try:
-                d[key] = json.loads(d[key])
+                d[key] = json.loads(value)
             except Exception:
                 pass
+
     if "is_admin" in d:
         d["is_admin"] = bool(d["is_admin"])
     if "available" in d:
@@ -175,18 +191,20 @@ def model_to_dict(obj):
         d["featured"] = bool(d["featured"])
     return d
 
-def models_to_list(rows):
-    return [model_to_dict(r) for r in rows]
+def models_to_list(rows: List[Any]) -> List[Dict[str, Any]]:
+    return [d for d in (model_to_dict(r) for r in rows) if d is not None]
 
-def public_user(user):
-    data = {
+def public_user(user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    user = user or {}
+    data: Dict[str, Any] = {
         "id": user.get("id"),
-        "name": user.get("name"),
+        "name": user.get("name") or "",
         "email": user.get("email") or "",
         "phone": user.get("phone") or "",
         "is_admin": bool(user.get("is_admin")),
     }
-    if data["email"].startswith("phone_") and data["email"].endswith("@mobile.local"):
+    email = str(data.get("email") or "")
+    if email.startswith("phone_") and email.endswith("@mobile.local"):
         data["email"] = ""
     return data
 
@@ -245,11 +263,11 @@ def decode_token(token: str):
     except JWTError:
         return None
 
-def get_user_by_id(db: Session, user_id: str):
+def get_user_by_id(db: Session, user_id: str) -> Optional[Dict[str, Any]]:
     user = db.query(User).filter(User.id == user_id).first()
     return model_to_dict(user)
 
-def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)):
+def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)) -> Dict[str, Any]:
     if not creds:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = decode_token(creds.credentials)
@@ -263,7 +281,7 @@ def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer), db: 
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
-def require_admin(user=Depends(get_current_user)):
+def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
@@ -545,9 +563,9 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     phone = normalize_phone(identifier) if "@" not in identifier else None
     user = get_user_by_email_or_phone(db, email, phone)
     user_dict = model_to_dict(user)
-    if not user_dict or not user_dict.get("password") or not verify_password(body.password, user_dict["password"]):
+    if not user_dict or not user_dict.get("password") or not verify_password(body.password, str(user_dict["password"])):
         raise HTTPException(401, "Invalid email/mobile number or password")
-    token = create_token({"sub": user_dict["id"]})
+    token = create_token({"sub": str(user_dict["id"])})
     return {"token": token, "user": public_user(user_dict)}
 
 @app.post("/api/auth/forgot-password/send-otp")
@@ -608,7 +626,7 @@ def forgot_password_reset(body: ForgotPasswordResetIn, db: Session = Depends(get
     return {"ok": True, "message": "Password reset successful"}
 
 @app.get("/api/auth/me")
-def me(user=Depends(get_current_user)):
+def me(user: Dict[str, Any] = Depends(get_current_user)):
     return public_user(user)
 
 # ── Products ──────────────────────────────────────────────────────
@@ -686,7 +704,7 @@ def delete_product(pid: str, db: Session = Depends(get_db)):
 ORDER_STATUSES = ["pending", "confirmed", "packed", "out_for_delivery", "delivered", "cancelled"]
 
 @app.post("/api/orders")
-def create_order(body: OrderIn, user=Depends(get_current_user), db: Session = Depends(get_db)):
+def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
     items_detail = []
     subtotal = 0
     for ci in body.items:
@@ -739,12 +757,12 @@ def create_order(body: OrderIn, user=Depends(get_current_user), db: Session = De
     db.add(order)
     db.commit()
     db.refresh(order)
-    result = model_to_dict(order)
+    result = model_to_dict(order) or {}
     result["delivery_directions_url"] = make_directions_url(body.delivery_lat, body.delivery_lng, body.address)
     return result
 
 @app.get("/api/orders")
-def list_orders(user=Depends(get_current_user), db: Session = Depends(get_db)):
+def list_orders(user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.get("is_admin"):
         rows = db.query(Order).order_by(Order.created_at.desc()).all()
     else:
@@ -752,12 +770,12 @@ def list_orders(user=Depends(get_current_user), db: Session = Depends(get_db)):
     return models_to_list(rows)
 
 @app.get("/api/orders/{oid}")
-def get_order(oid: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+def get_order(oid: str, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
     order = db.query(Order).filter(Order.id == oid).first()
     order_dict = model_to_dict(order)
     if not order_dict:
         raise HTTPException(404, "Order not found")
-    if not user.get("is_admin") and order_dict["user_id"] != user["id"]:
+    if not user.get("is_admin") and order_dict.get("user_id") != user.get("id"):
         raise HTTPException(403, "Access denied")
     return order_dict
 
@@ -768,7 +786,7 @@ def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get
     order = db.query(Order).filter(Order.id == oid).first()
     if not order:
         raise HTTPException(404, "Order not found")
-    order_dict = model_to_dict(order)
+    order_dict = model_to_dict(order) or {}
     timeline = order_dict.get("timeline", [])
     timeline.append({"status": body.status, "at": now_iso()})
     order.status = body.status
@@ -798,8 +816,13 @@ def admin_stats(db: Session = Depends(get_db)):
 # ── Health ────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
-    db_type = "postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite"
-    return {"status": "ok", "service": "Amar Veggies SQLAlchemy API", "database": db_type, "shop_location_configured": bool(SHOP_LAT and SHOP_LNG)}
+    db_type = "postgresql" if DATABASE_URL.startswith("postgres") else "sqlite"
+    return {
+        "status": "ok",
+        "service": "Amar Veggies SQLAlchemy API",
+        "database": db_type,
+        "shop_location_configured": bool(SHOP_LAT and SHOP_LNG),
+    }
 
 # ── Product images ────────────────────────────────────────────────
 @app.post("/api/products/{pid}/image", dependencies=[Depends(require_admin)])
