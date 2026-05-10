@@ -9,3 +9,4 @@ SQLAlchemy==2.0.36
 psycopg2-binary==2.9.9
 requests==2.32.3
 twilio==9.6.1
+razorpay==1.4.2
