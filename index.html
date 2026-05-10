@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
@@ -364,7 +365,10 @@ async function getPreviousCheckoutDetails() {
     address: latest.address || "",
     phone: latest.phone || "",
     slot: latest.slot || "",
-    notes: latest.notes || ""
+    notes: latest.notes || "",
+    delivery_lat: latest.delivery_lat ?? null,
+    delivery_lng: latest.delivery_lng ?? null,
+    delivery_place_id: latest.delivery_place_id || ""
   };
 }
 
@@ -967,7 +971,7 @@ function CartPage() {
             <span style={{fontWeight:700}}>Total</span>
             <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:"1.5rem",fontWeight:700,color:"var(--leaf)"}}>₹{total}</span>
           </div>
-          <div style={{background:"var(--cream)",borderRadius:10,padding:".65rem .85rem",fontSize:".78rem",color:"var(--muted)",marginBottom:"1.25rem",textAlign:"center"}}>💵 Cash on Delivery</div>
+          <div style={{background:"var(--cream)",borderRadius:10,padding:".65rem .85rem",fontSize:".78rem",color:"var(--muted)",marginBottom:"1.25rem",textAlign:"center"}}>💳 Cash on Delivery or Online Payment</div>
           <button className="btn btn-primary btn-full btn-lg" onClick={() => user ? nav("checkout") : nav("login", {redirect:"checkout"})}>
             {user ? "Proceed to Checkout →" : "Sign in to Checkout →"}
           </button>
@@ -1116,6 +1120,7 @@ function CheckoutPage() {
   const {nav} = useContext(RouterCtx);
   const toast = useContext(ToastCtx);
   const [form, setForm] = useState({address:"",phone:"",slot:"",notes:"",delivery_lat:null,delivery_lng:null,delivery_place_id:""});
+  const [paymentMethod, setPaymentMethod] = useState("cod");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [previousLoaded, setPreviousLoaded] = useState(false);
@@ -1138,7 +1143,10 @@ function CheckoutPage() {
           address: prev.address || previous.address,
           phone: prev.phone || previous.phone || user.phone || "",
           slot: prev.slot || previous.slot,
-          notes: prev.notes || previous.notes
+          notes: prev.notes || previous.notes,
+          delivery_lat: prev.delivery_lat ?? previous.delivery_lat,
+          delivery_lng: prev.delivery_lng ?? previous.delivery_lng,
+          delivery_place_id: prev.delivery_place_id || previous.delivery_place_id
         }));
         setPreviousLoaded(true);
         toast("Previous checkout details loaded ✓");
@@ -1156,6 +1164,7 @@ function CheckoutPage() {
 
   const submit = async () => {
     if (!form.address || !form.phone || !form.slot) { setErr("Please fill in all required fields"); return; }
+    if (!form.delivery_lat || !form.delivery_lng) { setErr("Please pin your delivery location on the map"); return; }
     setLoading(true); setErr("");
     try {
       const orderItems = items.map(i => ({
@@ -1194,7 +1203,8 @@ function CheckoutPage() {
             <div className="field"><label>Special Instructions (optional)</label><textarea placeholder="E.g. Leave at door, no plastic bags" rows={2} value={form.notes} onChange={e => setForm(f=>({...f,notes:e.target.value}))}/></div>
           </div>
           <div style={{background:"var(--cream)",borderRadius:12,padding:"1rem",fontSize:".82rem",color:"var(--muted)",display:"flex",gap:".5rem"}}>
-            <span>💵</span> <span>Payment: <strong style={{color:"var(--ink)"}}>Cash on Delivery</strong> — pay when your order arrives.</span>
+            <span>{paymentMethod === "online" ? "💳" : "💵"}</span>
+            <span>Payment: <strong style={{color:"var(--ink)"}}>{paymentMethod === "online" ? "Online Payment" : "Cash on Delivery"}</strong>{paymentMethod === "online" ? " — pay securely with UPI, cards, wallets or net banking." : " — pay when your order arrives."}</span>
           </div>
         </div>
 
@@ -1212,10 +1222,25 @@ function CheckoutPage() {
           <div className="flex justify-between" style={{fontWeight:700,fontSize:"1.1rem",marginBottom:"1.25rem"}}>
             <span>Total</span><span style={{color:"var(--leaf)",fontFamily:"'Cormorant Garamond',serif",fontSize:"1.4rem"}}>₹{total}</span>
           </div>
+
+          <div className="field" style={{marginBottom:"1rem"}}>
+            <label>Payment Method</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem"}}>
+              <button type="button" className={`btn ${paymentMethod === "cod" ? "btn-primary" : "btn-ghost"}`} style={{justifyContent:"center"}} onClick={() => setPaymentMethod("cod")}>
+                💵 COD
+              </button>
+              <button type="button" className={`btn ${paymentMethod === "online" ? "btn-primary" : "btn-ghost"}`} style={{justifyContent:"center"}} onClick={() => setPaymentMethod("online")}>
+                💳 Online
+              </button>
+            </div>
+          </div>
+
           <button className="btn btn-primary btn-full btn-lg" onClick={submit} disabled={loading}>
-            {loading ? "Placing Order…" : `Place Order ₹${total}`}
+            {loading ? (paymentMethod === "online" ? "Opening Payment…" : "Placing Order…") : (paymentMethod === "online" ? `Pay Online ₹${total}` : `Place COD Order ₹${total}`)}
           </button>
-          <p className="text-xs text-muted mt-2" style={{textAlign:"center"}}>You'll pay in cash upon delivery</p>
+          <p className="text-xs text-muted mt-2" style={{textAlign:"center"}}>
+            {paymentMethod === "online" ? "Secured by Razorpay" : "You'll pay in cash upon delivery"}
+          </p>
         </div>
       </div>
     </div>
@@ -1249,7 +1274,8 @@ function OrderSuccessPage() {
           <div className="flex justify-between fw-700"><span>Total</span><span style={{color:"var(--leaf)"}}>₹{order.total}</span></div>
         </div>
         <div style={{background:"#fef9c3",borderRadius:10,padding:".65rem",fontSize:".8rem",color:"#92400e",marginBottom:"1.5rem"}}>
-          📍 Slot: {order.slot}
+          📍 Slot: {order.slot}<br/>
+          {order.payment_status === "paid" ? "✅ Payment: Online Paid" : "💵 Payment: Cash on Delivery"}
           {order.delivery_maps_url && <><br/><a href={order.delivery_maps_url} target="_blank" style={{color:"#92400e",fontWeight:700}}>View pinned location</a></>}
         </div>
         <div className="flex gap-2 justify-center flex-wrap">
