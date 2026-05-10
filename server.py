@@ -20,7 +20,7 @@ from typing import Optional, List, Any, Dict, cast
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import create_engine, Column, String, Integer, Float, Text
+from sqlalchemy import create_engine, Column, String, Integer, Float, Text, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 import uuid
@@ -83,7 +83,7 @@ class Product(Base):
     category = Column(String, nullable=False)
     price = Column(Float, nullable=False)
     unit = Column(String, nullable=False)
-    stock = Column(Integer, nullable=False)
+    stock = Column(Float, nullable=False)
     available = Column(Integer, nullable=False, default=1)
     featured = Column(Integer, nullable=False, default=0)
     quantity_options = Column(Text, nullable=False, default="[100,250,500,1000]")
@@ -115,6 +115,20 @@ class Order(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight migration for older databases where products.stock was INTEGER.
+    # This lets stock support decimal kg values like 0.5 after 500g orders.
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("postgres"):
+                conn.execute(text("ALTER TABLE products ALTER COLUMN stock TYPE DOUBLE PRECISION USING stock::double precision"))
+            else:
+                # SQLite is dynamically typed, so existing INTEGER columns can store decimals.
+                # No table rebuild needed for local development.
+                pass
+    except Exception as e:
+        print(f"⚠️ Stock column migration skipped: {e}")
+
     print("✅ Database ready")
 
 def get_db():
@@ -332,7 +346,7 @@ class ProductIn(BaseModel):
     category: str
     price: float
     unit: str
-    stock: int
+    stock: float
     available: Optional[bool] = True
     featured: Optional[bool] = False
     quantity_options: Optional[List[int]] = [100, 250, 500, 1000]
@@ -653,7 +667,7 @@ def create_product(body: ProductIn, db: Session = Depends(get_db)):
         category=p["category"],
         price=p["price"],
         unit=p["unit"],
-        stock=p["stock"],
+        stock=float(p["stock"]),
         available=1 if p.get("available") else 0,
         featured=1 if p.get("featured") else 0,
         quantity_options=json.dumps(p.get("quantity_options") or [100, 250, 500, 1000]),
@@ -677,7 +691,7 @@ def update_product(pid: str, body: ProductIn, db: Session = Depends(get_db)):
     product.category = p["category"]
     product.price = p["price"]
     product.unit = p["unit"]
-    product.stock = p["stock"]
+    product.stock = float(p["stock"])
     product.available = 1 if p.get("available") else 0
     product.featured = 1 if p.get("featured") else 0
     product.quantity_options = json.dumps(p.get("quantity_options") or [100, 250, 500, 1000])
@@ -708,10 +722,22 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
             raise HTTPException(400, f"Product {ci.product_id} not found")
         if not p.get("available"):
             raise HTTPException(400, f"{p['name']} is unavailable")
+        if ci.quantity <= 0:
+            raise HTTPException(400, f"Invalid quantity for {p['name']}")
         if ci.selected_weight not in p.get("quantity_options", [100, 250, 500, 1000]):
             raise HTTPException(400, f"Invalid weight option for {p['name']}")
+
         weight = ci.selected_weight or 1000
-        line_total = round(p["price"] * (weight / 1000) * ci.quantity, 2)
+        stock_needed = round((weight / 1000) * ci.quantity, 3)
+        current_stock = float(product.stock or 0)
+
+        if current_stock < stock_needed:
+            raise HTTPException(
+                400,
+                f"Only {current_stock:g} kg stock available for {p['name']}"
+            )
+
+        line_total = round(p["price"] * stock_needed, 2)
         subtotal += line_total
         items_detail.append({
             "product_id": ci.product_id,
@@ -722,7 +748,13 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
             "quantity": ci.quantity,
             "line_total": line_total,
             "selected_weight": ci.selected_weight,
+            "stock_deducted_kg": stock_needed,
         })
+
+        product.stock = round(current_stock - stock_needed, 3)
+        if product.stock <= 0:
+            product.stock = 0
+            product.available = 0
 
     delivery = 0 if subtotal >= 300 else 40
     timeline = [{"status": "pending", "at": now_iso()}]
