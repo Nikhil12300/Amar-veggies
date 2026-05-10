@@ -471,8 +471,23 @@ function AuthProvider({children}) {
    CART PROVIDER
 ═══════════════════════════════════════════════════════════ */
 function CartProvider({children}) {
-  const [cart, setCart] = useState({});
+
+  // LOAD CART FROM LOCAL STORAGE
+  const [cart, setCart] = useState(() => {
+    try {
+      const saved = localStorage.getItem("amarveggies_cart");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
   const [products, setProducts] = useState([]);
+
+  // SAVE CART TO LOCAL STORAGE ON EVERY CHANGE
+  useEffect(() => {
+    localStorage.setItem("amarveggies_cart", JSON.stringify(cart));
+  }, [cart]);
 
   const add = (id, weight = 1000) => {
     const key = `${id}_${weight}`;
@@ -490,11 +505,13 @@ function CartProvider({children}) {
   const set = (key, qty) => {
     setCart(prev => {
       if (!prev[key]) return prev;
+
       if (qty <= 0) {
         const copy = {...prev};
         delete copy[key];
         return copy;
       }
+
       return {
         ...prev,
         [key]: {
@@ -513,11 +530,16 @@ function CartProvider({children}) {
     });
   };
 
-  const clear = () => setCart({});
+  const clear = () => {
+    setCart({});
+    localStorage.removeItem("amarveggies_cart");
+  };
+
   const count = Object.values(cart).reduce((s, ci) => s + ci.quantity, 0);
 
   const items = Object.entries(cart).map(([key, ci]) => {
     const p = products.find(x => x.id === ci.id);
+
     if (!p) return null;
 
     const weight = Number(ci.weight) || 1000;
@@ -536,7 +558,20 @@ function CartProvider({children}) {
   const total = subtotal + delivery;
 
   return (
-    <CartCtx.Provider value={{cart, set, add, remove, clear, count, items, subtotal, delivery, total, products, setProducts}}>
+    <CartCtx.Provider value={{
+      cart,
+      set,
+      add,
+      remove,
+      clear,
+      count,
+      items,
+      subtotal,
+      delivery,
+      total,
+      products,
+      setProducts
+    }}>
       {children}
     </CartCtx.Provider>
   );
