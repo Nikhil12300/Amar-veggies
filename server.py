@@ -23,6 +23,7 @@ from passlib.context import CryptContext
 from sqlalchemy import create_engine, Column, String, Integer, Float, Text, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
+from twilio.rest import Client 
 import uuid
 import os
 import json
@@ -52,6 +53,10 @@ BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 OTP_EMAIL_FROM = os.getenv("OTP_EMAIL_FROM", "")
 OTP_EMAIL_FROM_NAME = os.getenv("OTP_EMAIL_FROM_NAME", "Amar Veggies")
 SHOW_DEV_OTP = os.getenv("SHOW_DEV_OTP", "true").lower() == "true"
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "")
+ADMIN_WHATSAPP_NUMBER = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 
 # ── Database ──────────────────────────────────────────────────────
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -192,6 +197,62 @@ def build_otp_response(otp: str) -> Dict[str, Any]:
 def send_email_otp(to_email: str, otp: str, purpose: str = "verification") -> bool:
     if not BREVO_API_KEY or not OTP_EMAIL_FROM:
         print("⚠️ Brevo email config missing. OTP email was not sent.")
+        return False
+
+def send_whatsapp_order_notification(order_data: Dict[str, Any]) -> bool:
+    if (
+        not TWILIO_ACCOUNT_SID
+        or not TWILIO_AUTH_TOKEN
+        or not TWILIO_WHATSAPP_NUMBER
+        or not ADMIN_WHATSAPP_NUMBER
+    ):
+        print("⚠️ Twilio WhatsApp config missing")
+        return False
+
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+        items_text = ""
+        for item in order_data.get("items", []):
+            items_text += (
+                f"• {item.get('name')} "
+                f"({item.get('selected_weight')}g × {item.get('quantity')})\n"
+            )
+
+        message_body = f"""
+🛒 *NEW ORDER RECEIVED*
+
+👤 Customer: {order_data.get('user_name')}
+📞 Phone: {order_data.get('phone')}
+
+📍 Address:
+{order_data.get('address')}
+
+🧺 Items:
+{items_text}
+
+💰 Total: ₹{order_data.get('total')}
+
+🕒 Slot: {order_data.get('slot')}
+
+📝 Notes:
+{order_data.get('notes') or 'None'}
+
+━━━━━━━━━━━━━━
+Amar Veggies
+"""
+
+        client.messages.create(
+            body=message_body,
+            from_=TWILIO_WHATSAPP_NUMBER,
+            to=ADMIN_WHATSAPP_NUMBER,
+        )
+
+        print("✅ WhatsApp notification sent")
+        return True
+
+    except Exception as e:
+        print("⚠️ WhatsApp send failed:", e)
         return False
 
     subject = f"{otp} is your Amar Veggies OTP"
@@ -853,6 +914,18 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
     db.add(order)
     db.commit()
     db.refresh(order)
+    try:
+        send_whatsapp_order_notification({
+            "user_name": user["name"],
+            "phone": body.phone,
+            "address": body.address,
+            "items": items_detail,
+            "total": round(subtotal + delivery, 2),
+            "slot": body.slot,
+            "notes": body.notes or "",
+        })
+    except Exception as e:
+        print("⚠️ WhatsApp notification error:", e)
     result = model_to_dict(order) or {}
     result["delivery_directions_url"] = make_directions_url(body.delivery_lat, body.delivery_lng, body.address)
     return result
