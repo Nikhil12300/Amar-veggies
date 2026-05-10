@@ -20,8 +20,8 @@ from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import create_engine, Column, String, Integer, Float, Text, text
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy import create_engine, String, Integer, Float, Text, text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 from twilio.rest import Client 
 import uuid
@@ -62,66 +62,67 @@ ADMIN_WHATSAPP_NUMBER = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    email = Column(String, unique=True, nullable=True)
-    phone = Column(String, unique=True, nullable=True)
-    password = Column(Text, nullable=True)
-    is_admin = Column(Integer, nullable=False, default=0)
-    created_at = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
+    password: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_admin: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 class OTP(Base):
     __tablename__ = "otps"
-    id = Column(String, primary_key=True)
-    email = Column(String, nullable=True)
-    phone = Column(String, nullable=True)
-    otp = Column(String, nullable=False)
-    purpose = Column(String, nullable=False, default="register")
-    expires_at = Column(String, nullable=False)
-    created_at = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    otp: Mapped[str] = mapped_column(String, nullable=False)
+    purpose: Mapped[str] = mapped_column(String, nullable=False, default="register")
+    expires_at: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 class Product(Base):
     __tablename__ = "products"
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    description = Column(Text, default="")
-    emoji = Column(String, default="🌿")
-    category = Column(String, nullable=False)
-    price = Column(Float, nullable=False)
-    unit = Column(String, nullable=False)
-    stock = Column(Float, nullable=False)
-    available = Column(Integer, nullable=False, default=1)
-    featured = Column(Integer, nullable=False, default=0)
-    quantity_options = Column(Text, nullable=False, default="[100,250,500,1000]")
-    image_data = Column(Text, nullable=True)
-    created_at = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    emoji: Mapped[str] = mapped_column(String, default="🌿")
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String, nullable=False)
+    stock: Mapped[float] = mapped_column(Float, nullable=False)
+    available: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    featured: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quantity_options: Mapped[str] = mapped_column(Text, nullable=False, default="[100,250,500,1000]")
+    image_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 class Order(Base):
     __tablename__ = "orders"
-    id = Column(String, primary_key=True)
-    user_id = Column(String, nullable=False)
-    user_name = Column(String, nullable=False)
-    user_email = Column(String, nullable=False)
-    items = Column(Text, nullable=False)
-    address = Column(Text, nullable=False)
-    phone = Column(String, nullable=False)
-    slot = Column(String, nullable=False)
-    notes = Column(Text, default="")
-    delivery_lat = Column(Float, nullable=True)
-    delivery_lng = Column(Float, nullable=True)
-    delivery_place_id = Column(Text, default="")
-    delivery_maps_url = Column(Text, default="")
-    subtotal = Column(Float, nullable=False)
-    delivery = Column(Float, nullable=False)
-    total = Column(Float, nullable=False)
-    payment = Column(String, nullable=False, default="Cash on Delivery")
-    status = Column(String, nullable=False, default="pending")
-    timeline = Column(Text, nullable=False)
-    created_at = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    user_name: Mapped[str] = mapped_column(String, nullable=False)
+    user_email: Mapped[str] = mapped_column(String, nullable=False)
+    items: Mapped[str] = mapped_column(Text, nullable=False)
+    address: Mapped[str] = mapped_column(Text, nullable=False)
+    phone: Mapped[str] = mapped_column(String, nullable=False)
+    slot: Mapped[str] = mapped_column(String, nullable=False)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    delivery_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    delivery_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    delivery_place_id: Mapped[str] = mapped_column(Text, default="")
+    delivery_maps_url: Mapped[str] = mapped_column(Text, default="")
+    subtotal: Mapped[float] = mapped_column(Float, nullable=False)
+    delivery: Mapped[float] = mapped_column(Float, nullable=False)
+    total: Mapped[float] = mapped_column(Float, nullable=False)
+    payment: Mapped[str] = mapped_column(String, nullable=False, default="Cash on Delivery")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    timeline: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -199,6 +200,44 @@ def send_email_otp(to_email: str, otp: str, purpose: str = "verification") -> bo
         print("⚠️ Brevo email config missing. OTP email was not sent.")
         return False
 
+    subject = f"{otp} is your Amar Veggies OTP"
+    html_content = f"""
+    <div style="font-family:Arial,sans-serif;padding:20px;line-height:1.5">
+        <h2 style="color:#1a3d2b;margin-bottom:8px">Amar Veggies</h2>
+        <p>Your OTP for {purpose} is:</p>
+        <h1 style="letter-spacing:4px;color:#2d6a4f">{otp}</h1>
+        <p>This OTP expires in {OTP_EXPIRE_MINUTES} minutes.</p>
+        <p style="color:#666;font-size:13px">If you did not request this OTP, you can ignore this email.</p>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": OTP_EMAIL_FROM_NAME, "email": OTP_EMAIL_FROM},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            json=payload,
+            headers=headers,
+            timeout=15,
+        )
+        if response.status_code not in (200, 201, 202):
+            print("Brevo email failed:", response.status_code, response.text)
+            return False
+        return True
+    except Exception as e:
+        print("Email send failed:", e)
+        return False
+
 def send_whatsapp_order_notification(order_data: Dict[str, Any]) -> bool:
     if (
         not TWILIO_ACCOUNT_SID
@@ -255,43 +294,6 @@ Amar Veggies
         print("⚠️ WhatsApp send failed:", e)
         return False
 
-    subject = f"{otp} is your Amar Veggies OTP"
-    html_content = f"""
-    <div style="font-family:Arial,sans-serif;padding:20px;line-height:1.5">
-        <h2 style="color:#1a3d2b;margin-bottom:8px">Amar Veggies</h2>
-        <p>Your OTP for {purpose} is:</p>
-        <h1 style="letter-spacing:4px;color:#2d6a4f">{otp}</h1>
-        <p>This OTP expires in {OTP_EXPIRE_MINUTES} minutes.</p>
-        <p style="color:#666;font-size:13px">If you did not request this OTP, you can ignore this email.</p>
-    </div>
-    """
-
-    payload = {
-        "sender": {"name": OTP_EMAIL_FROM_NAME, "email": OTP_EMAIL_FROM},
-        "to": [{"email": to_email}],
-        "subject": subject,
-        "htmlContent": html_content,
-    }
-    headers = {
-        "accept": "application/json",
-        "api-key": BREVO_API_KEY,
-        "content-type": "application/json",
-    }
-
-    try:
-        response = requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            json=payload,
-            headers=headers,
-            timeout=15,
-        )
-        if response.status_code not in (200, 201, 202):
-            print("⚠️ Brevo email failed:", response.status_code, response.text)
-            return False
-        return True
-    except Exception as e:
-        print("⚠️ Email send failed:", e)
-        return False
 
 def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
     if obj is None:
@@ -848,6 +850,8 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
     subtotal = 0
     for ci in body.items:
         product = db.query(Product).filter(Product.id == ci.product_id).first()
+        if product is None:
+            raise HTTPException(400, f"Product {ci.product_id} not found")
         p = model_to_dict(product)
         if not p:
             raise HTTPException(400, f"Product {ci.product_id} not found")
