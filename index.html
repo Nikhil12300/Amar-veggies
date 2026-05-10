@@ -1297,17 +1297,6 @@ function CheckoutPage() {
             </div>
             <div className="field"><label>Special Instructions (optional)</label><textarea placeholder="E.g. Leave at door, no plastic bags" rows={2} value={form.notes} onChange={e => setForm(f=>({...f,notes:e.target.value}))}/></div>
           </div>
-          <div style={{background:"var(--white)",borderRadius:12,padding:"1rem",fontSize:".82rem",color:"var(--muted)",border:"1.5px solid var(--border)"}}>
-            <div style={{fontWeight:700,color:"var(--ink)",marginBottom:".75rem"}}>Choose Payment Method</div>
-            <label style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".65rem",cursor:"pointer"}}>
-              <input type="radio" name="payment" value="cod" checked={paymentMethod === "cod"} onChange={() => setPaymentMethod("cod")}/>
-              <span>💵 Cash on Delivery</span>
-            </label>
-            <label style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}}>
-              <input type="radio" name="payment" value="online" checked={paymentMethod === "online"} onChange={() => setPaymentMethod("online")}/>
-              <span>💳 Pay Online with Razorpay / UPI</span>
-            </label>
-          </div>
         </div>
 
         <div style={{background:"var(--white)",borderRadius:20,border:"1.5px solid var(--border)",padding:"1.5rem",position:"sticky",top:84}}>
@@ -1323,6 +1312,17 @@ function CheckoutPage() {
           <div className="flex justify-between mb-2 text-sm"><span className="text-muted">Delivery</span><span style={{color:delivery===0?"var(--leaf)":"inherit"}}>{delivery===0?"FREE":"₹"+delivery}</span></div>
           <div className="flex justify-between" style={{fontWeight:700,fontSize:"1.1rem",marginBottom:"1.25rem"}}>
             <span>Total</span><span style={{color:"var(--leaf)",fontFamily:"'Cormorant Garamond',serif",fontSize:"1.4rem"}}>₹{total}</span>
+          </div>
+          <div style={{borderTop:"1px solid var(--border)",borderBottom:"1px solid var(--border)",padding:"1rem 0",marginBottom:"1.25rem",fontSize:".82rem",color:"var(--muted)"}}>
+            <div style={{fontWeight:700,color:"var(--ink)",marginBottom:".75rem"}}>Choose Payment Method</div>
+            <label style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".65rem",cursor:"pointer"}}>
+              <input type="radio" name="payment" value="cod" checked={paymentMethod === "cod"} onChange={() => setPaymentMethod("cod")}/>
+              <span>💵 Cash on Delivery</span>
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}}>
+              <input type="radio" name="payment" value="online" checked={paymentMethod === "online"} onChange={() => setPaymentMethod("online")}/>
+              <span>💳 Pay Online with Razorpay / UPI</span>
+            </label>
           </div>
           <button className="btn btn-primary btn-full btn-lg" onClick={submit} disabled={loading}>
             {loading ? (paymentMethod === "online" ? "Opening Payment…" : "Placing Order…") : (paymentMethod === "online" ? `Pay ₹${total}` : `Place Order ₹${total}`)}
