@@ -1162,7 +1162,6 @@ function CheckoutPage() {
 
   const submit = async () => {
     if (!form.address || !form.phone || !form.slot) { setErr("Please fill in all required fields"); return; }
-    if (!form.delivery_lat || !form.delivery_lng) { setErr("Please pin your delivery location on the map"); return; }
     setLoading(true); setErr("");
     try {
       const orderItems = items.map(i => ({
