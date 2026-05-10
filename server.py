@@ -29,6 +29,7 @@ import json
 import base64
 import random
 import re
+import requests
 
 # ── Config ────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "amar-veggies-local-secret")
@@ -47,6 +48,10 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "10"))
 SHOP_LAT = os.getenv("SHOP_LAT", "")
 SHOP_LNG = os.getenv("SHOP_LNG", "")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+OTP_EMAIL_FROM = os.getenv("OTP_EMAIL_FROM", "")
+OTP_EMAIL_FROM_NAME = os.getenv("OTP_EMAIL_FROM_NAME", "Amar Veggies")
+SHOW_DEV_OTP = os.getenv("SHOW_DEV_OTP", "true").lower() == "true"
 
 # ── Database ──────────────────────────────────────────────────────
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -173,6 +178,59 @@ def normalize_phone(phone: Optional[str]):
 
 def make_otp():
     return str(random.randint(100000, 999999))
+
+def build_otp_response(otp: str) -> Dict[str, Any]:
+    response: Dict[str, Any] = {
+        "ok": True,
+        "message": "OTP sent",
+        "expires_in_minutes": OTP_EXPIRE_MINUTES,
+    }
+    if SHOW_DEV_OTP:
+        response["dev_otp"] = otp
+    return response
+
+def send_email_otp(to_email: str, otp: str, purpose: str = "verification") -> bool:
+    if not BREVO_API_KEY or not OTP_EMAIL_FROM:
+        print("⚠️ Brevo email config missing. OTP email was not sent.")
+        return False
+
+    subject = f"{otp} is your Amar Veggies OTP"
+    html_content = f"""
+    <div style="font-family:Arial,sans-serif;padding:20px;line-height:1.5">
+        <h2 style="color:#1a3d2b;margin-bottom:8px">Amar Veggies</h2>
+        <p>Your OTP for {purpose} is:</p>
+        <h1 style="letter-spacing:4px;color:#2d6a4f">{otp}</h1>
+        <p>This OTP expires in {OTP_EXPIRE_MINUTES} minutes.</p>
+        <p style="color:#666;font-size:13px">If you did not request this OTP, you can ignore this email.</p>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": OTP_EMAIL_FROM_NAME, "email": OTP_EMAIL_FROM},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            json=payload,
+            headers=headers,
+            timeout=15,
+        )
+        if response.status_code not in (200, 201, 202):
+            print("⚠️ Brevo email failed:", response.status_code, response.text)
+            return False
+        return True
+    except Exception as e:
+        print("⚠️ Email send failed:", e)
+        return False
 
 def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
     if obj is None:
@@ -442,6 +500,10 @@ def send_otp(body: SendOtpIn, db: Session = Depends(get_db)):
     if phone:
         db.query(OTP).filter(OTP.phone == phone, OTP.purpose == "register").delete()
     otp = make_otp()
+    if email:
+        sent = send_email_otp(email, otp, "registration")
+        if not sent and not SHOW_DEV_OTP:
+            raise HTTPException(500, "Could not send OTP email. Please try again later")
     db.add(OTP(
         id=str(uuid.uuid4()),
         email=email,
@@ -452,7 +514,7 @@ def send_otp(body: SendOtpIn, db: Session = Depends(get_db)):
         created_at=now_iso(),
     ))
     db.commit()
-    return {"ok": True, "message": "OTP sent", "dev_otp": otp, "expires_in_minutes": OTP_EXPIRE_MINUTES}
+    return build_otp_response(otp)
 
 @app.post("/api/auth/verify-otp-register")
 def verify_otp_register(body: VerifyOtpRegisterIn, db: Session = Depends(get_db)):
@@ -522,6 +584,10 @@ def send_login_otp(body: SendLoginOtpIn, db: Session = Depends(get_db)):
     if phone:
         db.query(OTP).filter(OTP.phone == phone, OTP.purpose == "login").delete()
     otp = make_otp()
+    if email:
+        sent = send_email_otp(email, otp, "login")
+        if not sent and not SHOW_DEV_OTP:
+            raise HTTPException(500, "Could not send OTP email. Please try again later")
     db.add(OTP(
         id=str(uuid.uuid4()),
         email=email,
@@ -532,7 +598,7 @@ def send_login_otp(body: SendLoginOtpIn, db: Session = Depends(get_db)):
         created_at=now_iso(),
     ))
     db.commit()
-    return {"ok": True, "message": "OTP sent", "dev_otp": otp, "expires_in_minutes": OTP_EXPIRE_MINUTES}
+    return build_otp_response(otp)
 
 @app.post("/api/auth/verify-otp-login")
 def verify_otp_login(body: VerifyOtpLoginIn, db: Session = Depends(get_db)):
@@ -591,6 +657,10 @@ def forgot_password_send_otp(body: ForgotPasswordSendIn, db: Session = Depends(g
     if phone:
         db.query(OTP).filter(OTP.phone == phone, OTP.purpose == "reset_password").delete()
     otp = make_otp()
+    if email:
+        sent = send_email_otp(email, otp, "password reset")
+        if not sent and not SHOW_DEV_OTP:
+            raise HTTPException(500, "Could not send OTP email. Please try again later")
     db.add(OTP(
         id=str(uuid.uuid4()),
         email=email,
@@ -601,7 +671,7 @@ def forgot_password_send_otp(body: ForgotPasswordSendIn, db: Session = Depends(g
         created_at=now_iso(),
     ))
     db.commit()
-    return {"ok": True, "message": "OTP sent", "dev_otp": otp, "expires_in_minutes": OTP_EXPIRE_MINUTES}
+    return build_otp_response(otp)
 
 @app.post("/api/auth/forgot-password/reset")
 def forgot_password_reset(body: ForgotPasswordResetIn, db: Session = Depends(get_db)):
