@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import Optional, List, Any, Dict, cast
+from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -809,12 +809,46 @@ def get_order(oid: str, user: Dict[str, Any] = Depends(get_current_user), db: Se
 def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get_db)):
     if body.status not in ORDER_STATUSES:
         raise HTTPException(400, f"Invalid status. Valid: {ORDER_STATUSES}")
+
     order = db.query(Order).filter(Order.id == oid).first()
     if not order:
         raise HTTPException(404, "Order not found")
+
+    old_status = str(order.status or "")
     order_dict = model_to_dict(order) or {}
+
+    # If an order is cancelled after stock was deducted, restore that stock once.
+    # This block is protected by old_status != "cancelled" to prevent double restore.
+    if body.status == "cancelled" and old_status != "cancelled":
+        order_items = order_dict.get("items", [])
+        if isinstance(order_items, list):
+            for item in order_items:
+                if not isinstance(item, dict):
+                    continue
+
+                product_id = item.get("product_id")
+                if not product_id:
+                    continue
+
+                product = db.query(Product).filter(Product.id == str(product_id)).first()
+                if not product:
+                    continue
+
+                restored_stock = item.get("stock_deducted_kg")
+                if restored_stock is None:
+                    selected_weight = float(item.get("selected_weight") or 1000)
+                    quantity = int(item.get("quantity") or 0)
+                    restored_stock = round((selected_weight / 1000) * quantity, 3)
+
+                product.stock = round(float(product.stock or 0) + float(restored_stock), 3)
+                if float(product.stock or 0) > 0:
+                    product.available = 1
+
     timeline = order_dict.get("timeline", [])
+    if not isinstance(timeline, list):
+        timeline = []
     timeline.append({"status": body.status, "at": now_iso()})
+
     order.status = body.status
     order.timeline = json.dumps(timeline)
     db.commit()
