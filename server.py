@@ -383,7 +383,7 @@ def get_user_by_email_or_phone(db: Session, email: Optional[str], phone: Optiona
 # ── Security ──────────────────────────────────────────────────────
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
-razorpay_client = razorpay.Client(
+razorpay_client: Any = razorpay.Client(
     auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
 )
 
