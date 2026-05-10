@@ -31,6 +31,9 @@ import base64
 import random
 import re
 import requests
+import razorpay
+import hmac
+import hashlib
 
 # ── Config ────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "amar-veggies-local-secret")
@@ -57,6 +60,8 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "")
 ADMIN_WHATSAPP_NUMBER = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
 # ── Database ──────────────────────────────────────────────────────
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -120,6 +125,9 @@ class Order(Base):
     delivery: Mapped[float] = mapped_column(Float, nullable=False)
     total: Mapped[float] = mapped_column(Float, nullable=False)
     payment: Mapped[str] = mapped_column(String, nullable=False, default="Cash on Delivery")
+    payment_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    razorpay_order_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    razorpay_payment_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     timeline: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
@@ -375,6 +383,9 @@ def get_user_by_email_or_phone(db: Session, email: Optional[str], phone: Optiona
 # ── Security ──────────────────────────────────────────────────────
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
+razorpay_client = razorpay.Client(
+    auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
+)
 
 def hash_password(p):
     return pwd_ctx.hash(p)
@@ -486,6 +497,15 @@ class OrderIn(BaseModel):
     delivery_lat: Optional[float] = None
     delivery_lng: Optional[float] = None
     delivery_place_id: Optional[str] = ""
+
+class CreatePaymentOrderIn(BaseModel):
+    amount: float
+
+class VerifyPaymentIn(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    order_id: str
 
 class OrderStatusIn(BaseModel):
     status: str
@@ -841,6 +861,60 @@ def delete_product(pid: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True}
 
+@app.post("/api/create-payment-order")
+def create_payment_order(
+    body: CreatePaymentOrderIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    amount_paise = int(body.amount * 100)
+
+    payment_order = razorpay_client.order.create({
+        "amount": amount_paise,
+        "currency": "INR",
+        "payment_capture": 1
+    })
+
+    return {
+        "id": payment_order["id"],
+        "amount": payment_order["amount"],
+        "currency": payment_order["currency"],
+        "key": RAZORPAY_KEY_ID
+    }
+
+@app.post("/api/verify-payment")
+def verify_payment(
+    body: VerifyPaymentIn,
+    db: Session = Depends(get_db)
+):
+    generated_signature = hmac.new(
+        bytes(RAZORPAY_KEY_SECRET, "utf-8"),
+        bytes(
+            f"{body.razorpay_order_id}|{body.razorpay_payment_id}",
+            "utf-8"
+        ),
+        hashlib.sha256
+    ).hexdigest()
+
+    if generated_signature != body.razorpay_signature:
+        raise HTTPException(400, "Payment verification failed")
+
+    order = db.query(Order).filter(Order.id == body.order_id).first()
+
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    order.payment_status = "paid"
+    order.razorpay_order_id = body.razorpay_order_id
+    order.razorpay_payment_id = body.razorpay_payment_id
+    order.payment = "Online"
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "message": "Payment verified"
+    }
+
 # ── Orders ────────────────────────────────────────────────────────
 ORDER_STATUSES = ["pending", "confirmed", "packed", "out_for_delivery", "delivered", "cancelled"]
 
@@ -910,7 +984,8 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
         subtotal=round(subtotal, 2),
         delivery=delivery,
         total=round(subtotal + delivery, 2),
-        payment="Cash on Delivery",
+        payment="Pending",
+        payment_status="pending",
         status="pending",
         timeline=json.dumps(timeline),
         created_at=now_iso(),
