@@ -364,10 +364,7 @@ async function getPreviousCheckoutDetails() {
     address: latest.address || "",
     phone: latest.phone || "",
     slot: latest.slot || "",
-    notes: latest.notes || "",
-    delivery_lat: latest.delivery_lat ?? null,
-    delivery_lng: latest.delivery_lng ?? null,
-    delivery_place_id: latest.delivery_place_id || ""
+    notes: latest.notes || ""
   };
 }
 
@@ -1141,10 +1138,7 @@ function CheckoutPage() {
           address: prev.address || previous.address,
           phone: prev.phone || previous.phone || user.phone || "",
           slot: prev.slot || previous.slot,
-          notes: prev.notes || previous.notes,
-          delivery_lat: prev.delivery_lat ?? previous.delivery_lat,
-          delivery_lng: prev.delivery_lng ?? previous.delivery_lng,
-          delivery_place_id: prev.delivery_place_id || previous.delivery_place_id
+          notes: prev.notes || previous.notes
         }));
         setPreviousLoaded(true);
         toast("Previous checkout details loaded ✓");
