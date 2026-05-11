@@ -327,6 +327,39 @@ Amar Veggies
         print("⚠️ WhatsApp send failed:", e)
         return False
 
+def send_whatsapp_customer_status(order, status):
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_WHATSAPP_NUMBER:
+        print("⚠️ Twilio WhatsApp config missing")
+        return False
+
+    if not order.phone:
+        return False
+
+    status_labels = {
+        "pending": "placed",
+        "confirmed": "confirmed",
+        "out_for_delivery": "out for delivery",
+        "delivered": "delivered",
+        "cancelled": "cancelled",
+    }
+
+    status_text = status_labels.get(status, status.replace("_", " "))
+
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+        client.messages.create(
+            body=f"🌿 Amar Veggies Update\n\nYour order #{order.id[-8:].upper()} is now {status_text}.\n\nThank you for ordering!",
+            from_=TWILIO_WHATSAPP_NUMBER,
+            to=f"whatsapp:+91{normalize_phone(order.phone)}"
+        )
+
+        print("✅ Customer WhatsApp status update sent")
+        return True
+
+    except Exception as e:
+        print("⚠️ Customer WhatsApp update failed:", e)
+        return False
 
 def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
     if obj is None:
@@ -1107,6 +1140,12 @@ def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get
     order.timeline = json.dumps(timeline)
     db.commit()
     db.refresh(order)
+
+    try:
+        send_whatsapp_customer_status(order, body.status)
+    except Exception as e:
+        print("⚠️ Customer WhatsApp notification error:", e)
+
     return model_to_dict(order)
 
 # ── Admin stats ───────────────────────────────────────────────────
