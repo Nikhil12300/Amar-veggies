@@ -567,6 +567,9 @@ class VerifyPaymentIn(BaseModel):
 class OrderStatusIn(BaseModel):
     status: str
 
+class AssignDeliveryIn(BaseModel):
+    delivery_partner: str
+
 # ── Seed Admin ────────────────────────────────────────────────────
 def seed_admin():
     if not ADMIN_EMAIL or not ADMIN_PASSWORD:
@@ -1144,6 +1147,29 @@ def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get
         send_whatsapp_customer_status(order, body.status)
     except Exception as e:
         print("⚠️ Customer WhatsApp notification error:", e)
+
+    return model_to_dict(order)
+
+@app.put("/api/orders/{oid}/assign", dependencies=[Depends(require_admin)])
+def assign_delivery_partner(
+    oid: str,
+    body: AssignDeliveryIn,
+    db: Session = Depends(get_db)
+):
+    order = db.query(Order).filter(Order.id == oid).first()
+
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    partner = body.delivery_partner.strip()
+
+    if not partner:
+        raise HTTPException(400, "Delivery partner is required")
+
+    order.delivery_partner = partner
+
+    db.commit()
+    db.refresh(order)
 
     return model_to_dict(order)
 
