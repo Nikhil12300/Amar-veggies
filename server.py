@@ -121,6 +121,7 @@ class Order(Base):
     delivery_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     delivery_place_id: Mapped[str] = mapped_column(Text, default="")
     delivery_maps_url: Mapped[str] = mapped_column(Text, default="")
+    delivery_partner: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     subtotal: Mapped[float] = mapped_column(Float, nullable=False)
     delivery: Mapped[float] = mapped_column(Float, nullable=False)
     total: Mapped[float] = mapped_column(Float, nullable=False)
@@ -151,6 +152,11 @@ def init_db():
         conn.execute(text("""
             ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(255);
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS delivery_partner VARCHAR(255);
         """))
 
         conn.commit()
