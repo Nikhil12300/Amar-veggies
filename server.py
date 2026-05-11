@@ -932,6 +932,13 @@ def verify_payment(
     order.razorpay_order_id = body.razorpay_order_id
     order.razorpay_payment_id = body.razorpay_payment_id
     order.payment = "Online"
+    order.status = "confirmed"
+    timeline = json.loads(order.timeline or "[]")
+    timeline.append({
+        "status": "confirmed",
+        "at": now_iso()
+    })
+    order.timeline = json.dumps(timeline)
 
     db.commit()
 
@@ -1009,8 +1016,8 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
         subtotal=round(subtotal, 2),
         delivery=delivery,
         total=round(subtotal + delivery, 2),
-        payment="Pending",
-        payment_status="pending",
+        payment="Cash on Delivery",
+        payment_status="cod_pending",
         status="pending",
         timeline=json.dumps(timeline),
         created_at=now_iso(),
