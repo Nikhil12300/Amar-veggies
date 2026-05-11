@@ -948,7 +948,7 @@ def verify_payment(
     }
 
 # ── Orders ────────────────────────────────────────────────────────
-ORDER_STATUSES = ["pending", "confirmed", "packed", "out_for_delivery", "delivered", "cancelled"]
+ORDER_STATUSES = ["pending", "confirmed", "out_for_delivery", "delivered", "cancelled"]
 
 @app.post("/api/orders")
 def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
