@@ -1883,8 +1883,23 @@ function AdminPage() {
     catch(e) { toast(e.message, "error"); }
   };
 
+  const assignDeliveryPartner = async (oid, delivery_partner) => {
+    try {
+      const o = await apiFetch(`/orders/${oid}/assign`, {
+        method:"PUT",
+        body:JSON.stringify({delivery_partner})
+      });
+      setOrders(prev => prev.map(x => x.id===oid ? o : x));
+      setSelOrder(o);
+      toast("Delivery partner assigned ✓");
+    } catch(e) {
+      toast(e.message, "error");
+    }
+  };
+
   const navItems = [["dashboard","📊","Dashboard"],["products","🥦","Products"],["orders","📦","Orders"]];
   const ORDER_STATUSES = ["pending","confirmed","out_for_delivery","delivered","cancelled"];
+  const DELIVERY_PARTNERS = ["", "Self Delivery", "Rahul", "Amit"];
 
   return (
     <div className="admin-layout">
@@ -1975,7 +1990,7 @@ function AdminPage() {
             {loadingO ? <div className="empty-state"><p>Loading…</p></div> : (
               <div className="table-wrap">
                 <table className="table">
-                  <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Slot</th><th>Status</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Slot</th><th>Delivery</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>
                     {orders.map(o => (
                       <tr key={o.id} style={{cursor:"pointer"}} onClick={() => setSelOrder(o)}>
@@ -1989,6 +2004,15 @@ function AdminPage() {
                           {o.razorpay_payment_id && <div className="text-xs text-muted" style={{fontFamily:"monospace"}}>{o.razorpay_payment_id}</div>}
                         </td>
                         <td className="text-xs">{o.slot?.split("(")[1]?.replace(")","") || o.slot}</td>
+                        <td onClick={e=>e.stopPropagation()}>
+                          <select
+                            value={o.delivery_partner || ""}
+                            onChange={e => assignDeliveryPartner(o.id, e.target.value)}
+                            style={{padding:".35rem .5rem",borderRadius:8,border:"1px solid var(--border)",background:"var(--paper)",fontSize:".75rem"}}
+                          >
+                            {DELIVERY_PARTNERS.map(p => <option key={p || "none"} value={p}>{p || "Assign"}</option>)}
+                          </select>
+                        </td>
                         <td onClick={e=>e.stopPropagation()}>
                           <div className="flex gap-1 flex-wrap">
                             {o.status === "pending" && (
@@ -2023,7 +2047,7 @@ function AdminPage() {
                         <td><button className="btn btn-ghost" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={e=>{e.stopPropagation();setSelOrder(o);}}>View</button></td>
                       </tr>
                     ))}
-                    {orders.length === 0 && <tr><td colSpan={8} style={{textAlign:"center",color:"var(--muted)",padding:"3rem"}}>No orders yet.</td></tr>}
+                    {orders.length === 0 && <tr><td colSpan={9} style={{textAlign:"center",color:"var(--muted)",padding:"3rem"}}>No orders yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -2059,7 +2083,16 @@ function AdminPage() {
               <a className="btn btn-ghost" target="_blank" href={selOrder.delivery_maps_url}>Open pin</a>
               <a className="btn btn-primary" target="_blank" href={`https://www.google.com/maps/dir/?api=1&destination=${selOrder.delivery_lat},${selOrder.delivery_lng}&travelmode=driving`}>Start delivery route</a>
             </div>}
-            <p className="text-sm mb-3">📞 {selOrder.phone} · 🕒 {selOrder.slot}</p>
+            <p className="text-sm mb-2">📞 {selOrder.phone} · 🕒 {selOrder.slot}</p>
+            <div className="field mb-3">
+              <label>Assign Delivery Partner</label>
+              <select
+                value={selOrder.delivery_partner || ""}
+                onChange={e => assignDeliveryPartner(selOrder.id, e.target.value)}
+              >
+                {DELIVERY_PARTNERS.map(p => <option key={p || "none-modal"} value={p}>{p || "Select delivery partner"}</option>)}
+              </select>
+            </div>
             {selOrder.notes && <div style={{background:"var(--cream)",borderRadius:10,padding:".65rem",fontSize:".82rem",marginBottom:"1rem"}}>📝 {selOrder.notes}</div>}
             {selOrder.items?.map(i => (
               <div key={i.product_id} className="flex justify-between text-sm mb-1 pb-1" style={{borderBottom:"1px solid var(--border)"}}>
