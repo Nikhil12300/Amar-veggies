@@ -135,6 +135,28 @@ class Order(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
 
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'pending';
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS razorpay_order_id VARCHAR(255);
+        """))
+
+        conn.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(255);
+        """))
+
+        conn.commit()
+
+    print("Database migration completed")
+
     # Lightweight migration for older databases where products.stock was INTEGER.
     # This lets stock support decimal kg values like 0.5 after 500g orders.
     try:
