@@ -139,30 +139,20 @@ def init_db():
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        conn.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'pending';
-        """))
+        migrations = [
+            "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) DEFAULT 'pending';",
+            "ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(255);",
+            "ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(255);",
+            "ALTER TABLE orders ADD COLUMN delivery_partner VARCHAR(255);",
+        ]
 
-        conn.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS razorpay_order_id VARCHAR(255);
-        """))
+        for migration in migrations:
+            try:
+                conn.execute(text(migration))
+            except Exception as e:
+                print(f"Migration skipped: {e}")
 
-        conn.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(255);
-        """))
-
-        try:
-            conn.execute(text("""
-                ALTER TABLE orders
-                ADD COLUMN delivery_partner VARCHAR(255);
-            """))
-        except Exception as e:
-            print(f"delivery_partner column already exists or skipped: {e}")
-
-        conn.commit()
+    conn.commit()
 
     print("Database migration completed")
 
