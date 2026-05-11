@@ -344,11 +344,37 @@ def send_whatsapp_customer_status(order, status):
 
     status_text = status_labels.get(status, status.replace("_", " "))
 
+    extra_message = ""
+
+    if status == "confirmed":
+        extra_message = "\n\n🧺 Your groceries are being prepared."
+
+    elif status == "out_for_delivery":
+        partner = order.delivery_partner or "our delivery partner"
+
+        tracking_link = order.delivery_maps_url or ""
+
+        extra_message = f"""
+
+    🚚 Your order is on the way with {partner}.
+
+    📍 Track location:
+    {tracking_link}
+    """
+
+    elif status == "delivered":
+        extra_message = "\n\n✅ Delivered successfully. Thank you for shopping with Amar Veggies!"
+
     try:
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
         client.messages.create(
-            body=f"🌿 Amar Veggies Update\n\nYour order #{order.id[-8:].upper()} is now {status_text}.\n\nThank you for ordering!",
+            body=f"""🌿 Amar Veggies Update
+
+            Your order #{order.id[-8:].upper()} is now {status_text}.{extra_message}
+
+            Thank you for ordering!
+            """,
             from_=TWILIO_WHATSAPP_NUMBER,
             to=f"whatsapp:+91{normalize_phone(order.phone)}"
         )
