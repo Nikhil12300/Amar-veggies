@@ -154,10 +154,13 @@ def init_db():
             ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(255);
         """))
 
-        conn.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS delivery_partner VARCHAR(255);
-        """))
+        try:
+            conn.execute(text("""
+                ALTER TABLE orders
+                ADD COLUMN delivery_partner VARCHAR(255);
+            """))
+        except Exception as e:
+            print(f"delivery_partner column already exists or skipped: {e}")
 
         conn.commit()
 
