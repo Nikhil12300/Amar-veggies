@@ -1201,6 +1201,11 @@ function CheckoutPage() {
       body: JSON.stringify({amount: Number(total.toFixed(2))})
     });
 
+    const order = await apiFetch("/orders", {
+      method:"POST",
+      body: JSON.stringify(orderPayload())
+    });
+
     return await new Promise((resolve, reject) => {
       const options = {
         key: paymentOrder.key,
@@ -1223,11 +1228,6 @@ function CheckoutPage() {
         },
         handler: async function (response) {
           try {
-            const order = await apiFetch("/orders", {
-              method:"POST",
-              body: JSON.stringify(orderPayload())
-            });
-
             await apiFetch("/verify-payment", {
               method:"POST",
               body: JSON.stringify({
@@ -1970,7 +1970,7 @@ function AdminPage() {
             {loadingO ? <div className="empty-state"><p>Loading…</p></div> : (
               <div className="table-wrap">
                 <table className="table">
-                  <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Slot</th><th>Status</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Slot</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>
                     {orders.map(o => (
                       <tr key={o.id} style={{cursor:"pointer"}} onClick={() => setSelOrder(o)}>
@@ -1978,6 +1978,11 @@ function AdminPage() {
                         <td><div style={{fontWeight:600}}>{o.user_name}</div><div className="text-xs text-muted">{o.user_email}</div></td>
                         <td>{o.items?.length} item{o.items?.length!==1?"s":""}</td>
                         <td className="fw-700 text-leaf">₹{o.total}</td>
+                        <td>
+                          <div className="fw-700">{o.payment_status === "paid" ? "Paid" : "Pending"}</div>
+                          <div className="text-xs text-muted">{o.payment || "—"}</div>
+                          {o.razorpay_payment_id && <div className="text-xs text-muted" style={{fontFamily:"monospace"}}>{o.razorpay_payment_id}</div>}
+                        </td>
                         <td className="text-xs">{o.slot?.split("(")[1]?.replace(")","") || o.slot}</td>
                         <td onClick={e=>e.stopPropagation()}>
                           <select className="form-input" style={{width:"auto",padding:".3rem .5rem",fontSize:".75rem"}} value={o.status} onChange={e => updateStatus(o.id, e.target.value)}>
@@ -1987,7 +1992,7 @@ function AdminPage() {
                         <td><button className="btn btn-ghost" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={e=>{e.stopPropagation();setSelOrder(o);}}>View</button></td>
                       </tr>
                     ))}
-                    {orders.length === 0 && <tr><td colSpan={7} style={{textAlign:"center",color:"var(--muted)",padding:"3rem"}}>No orders yet.</td></tr>}
+                    {orders.length === 0 && <tr><td colSpan={8} style={{textAlign:"center",color:"var(--muted)",padding:"3rem"}}>No orders yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -2014,6 +2019,10 @@ function AdminPage() {
               <StatusBadge status={selOrder.status}/>
             </div>
             <p className="text-sm text-muted mb-2">{selOrder.user_name} · {selOrder.user_email}</p>
+            <div style={{background:"var(--cream)",borderRadius:10,padding:".65rem",fontSize:".82rem",marginBottom:"1rem"}}>
+              💳 Payment: <strong>{selOrder.payment_status === "paid" ? "Paid Online" : "Pending / COD"}</strong>
+              {selOrder.razorpay_payment_id && <><br/>Payment ID: <span style={{fontFamily:"monospace"}}>{selOrder.razorpay_payment_id}</span></>}
+            </div>
             <p className="text-sm mb-2">📍 {selOrder.address}</p>
             {selOrder.delivery_maps_url && <div className="flex gap-1 flex-wrap mb-2">
               <a className="btn btn-ghost" target="_blank" href={selOrder.delivery_maps_url}>Open pin</a>
