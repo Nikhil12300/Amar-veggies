@@ -356,9 +356,9 @@ def send_whatsapp_customer_status(order, status):
 
         extra_message = f"""
 
-    🚚 Your order is on the way with {partner}.
+🚚 Your order is on the way with {partner}.
 
-    📍 Track location:
+📍 Track location:
     {tracking_link}
     """
 
@@ -371,9 +371,9 @@ def send_whatsapp_customer_status(order, status):
         client.messages.create(
             body=f"""🌿 Amar Veggies Update
 
-            Your order #{order.id[-8:].upper()} is now {status_text}.{extra_message}
+Your order #{order.id[-8:].upper()} is now {status_text}.{extra_message}
 
-            Thank you for ordering!
+Thank you for ordering!
             """,
             from_=TWILIO_WHATSAPP_NUMBER,
             to=f"whatsapp:+91{normalize_phone(order.phone)}"
