@@ -1985,9 +1985,41 @@ function AdminPage() {
                         </td>
                         <td className="text-xs">{o.slot?.split("(")[1]?.replace(")","") || o.slot}</td>
                         <td onClick={e=>e.stopPropagation()}>
-                          <select className="form-input" style={{width:"auto",padding:".3rem .5rem",fontSize:".75rem"}} value={o.status} onChange={e => updateStatus(o.id, e.target.value)}>
-                            {ORDER_STATUSES.map(s => <option key={s} value={s}>{s.replace("_"," ")}</option>)}
-                          </select>
+                          <div className="flex gap-1 flex-wrap">
+                            {o.status === "pending" && (
+                              <button className="btn btn-primary" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={() => updateStatus(o.id, "confirmed")}>
+                                Confirm
+                              </button>
+                            )}
+
+                            {o.status === "confirmed" && (
+                              <button className="btn btn-primary" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={() => updateStatus(o.id, "packed")}>
+                                Packed
+                              </button>
+                            )}
+
+                            {o.status === "packed" && (
+                              <button className="btn btn-primary" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={() => updateStatus(o.id, "out_for_delivery")}>
+                                Out
+                              </button>
+                            )}
+
+                            {o.status === "out_for_delivery" && (
+                              <button className="btn btn-primary" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={() => updateStatus(o.id, "delivered")}>
+                                Delivered
+                              </button>
+                            )}
+
+                            {o.status !== "cancelled" && o.status !== "delivered" && (
+                              <button className="btn btn-danger" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={() => updateStatus(o.id, "cancelled")}>
+                                Cancel
+                              </button>
+                            )}
+
+                            {(o.status === "delivered" || o.status === "cancelled") && (
+                              <span className="text-xs text-muted">No action</span>
+                            )}
+                          </div>
                         </td>
                         <td><button className="btn btn-ghost" style={{padding:".3rem .7rem",fontSize:".75rem"}} onClick={e=>{e.stopPropagation();setSelOrder(o);}}>View</button></td>
                       </tr>
