@@ -1850,6 +1850,117 @@ function ProductFormModal({product, onClose, onSaved}) {
 /* ═══════════════════════════════════════════════════════════
    ADMIN PAGE
 ═══════════════════════════════════════════════════════════ */
+function DeliveryPartnerPage() {
+  const {nav} = useContext(RouterCtx);
+  const toast = useContext(ToastCtx);
+  const [partner, setPartner] = useState("");
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const DELIVERY_PARTNERS = ["Rahul", "Amit", "Self Delivery"];
+
+  const loadOrders = async (selectedPartner) => {
+    setLoading(true);
+    try {
+      const allOrders = await apiFetch("/orders");
+      const assigned = allOrders.filter(o =>
+        o.delivery_partner === selectedPartner &&
+        o.status !== "delivered" &&
+        o.status !== "cancelled"
+      );
+      setOrders(assigned);
+    } catch (e) {
+      toast(e.message, "error");
+    }
+    setLoading(false);
+  };
+
+  const updateStatus = async (oid, status) => {
+    try {
+      await apiFetch(`/orders/${oid}/status`, {
+        method: "PUT",
+        body: JSON.stringify({status})
+      });
+      toast("Order updated ✓");
+      loadOrders(partner);
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
+
+  return (
+    <div className="page container" style={{paddingTop:"2rem",maxWidth:900}}>
+      <h1 className="page-title">Delivery Partner Panel</h1>
+      <p className="page-sub">View assigned orders and update delivery status</p>
+
+      <div className="field" style={{maxWidth:320}}>
+        <label>Select Delivery Partner</label>
+        <select value={partner} onChange={e => {
+          setPartner(e.target.value);
+          if (e.target.value) loadOrders(e.target.value);
+        }}>
+          <option value="">Choose partner</option>
+          {DELIVERY_PARTNERS.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+      </div>
+
+      {loading && <p>Loading assigned orders…</p>}
+
+      {!loading && partner && orders.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-state-icon">🚚</div>
+          <h3>No assigned orders</h3>
+        </div>
+      )}
+
+      {orders.map(o => (
+        <div key={o.id} className="order-card">
+          <div className="order-hd">
+            <div>
+              <div className="order-id-text">Order #{o.id.slice(-8).toUpperCase()}</div>
+              <div className="order-meta">{o.user_name} · ₹{o.total}</div>
+            </div>
+            <StatusBadge status={o.status}/>
+          </div>
+
+          <p className="text-sm mb-1">📍 {o.address}</p>
+          <p className="text-sm mb-2">📞 {o.phone} · 🕒 {o.slot}</p>
+
+          <div className="flex gap-1 flex-wrap">
+            {o.delivery_maps_url && (
+              <a className="btn btn-ghost" target="_blank" href={o.delivery_maps_url}>
+                Open Pin
+              </a>
+            )}
+
+            {o.delivery_lat && o.delivery_lng && (
+              <a
+                className="btn btn-primary"
+                target="_blank"
+                href={`https://www.google.com/maps/dir/?api=1&destination=${o.delivery_lat},${o.delivery_lng}&travelmode=driving`}
+              >
+                Start Route
+              </a>
+            )}
+
+            {o.status === "confirmed" && (
+              <button className="btn btn-primary" onClick={() => updateStatus(o.id, "out_for_delivery")}>
+                Picked Up
+              </button>
+            )}
+
+            {o.status === "out_for_delivery" && (
+              <button className="btn btn-primary" onClick={() => updateStatus(o.id, "delivered")}>
+                Mark Delivered
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AdminPage() {
   const {user} = useContext(AuthCtx);
   const {nav} = useContext(RouterCtx);
@@ -2148,6 +2259,7 @@ function AppInner() {
     login: <LoginPage/>,
     register: <RegisterPage/>,
     admin: <AdminPage/>,
+    delivery: <DeliveryPartnerPage/>,
   };
 
   return (
