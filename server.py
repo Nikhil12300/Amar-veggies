@@ -535,6 +535,12 @@ def get_current_delivery_partner(
 
     return partner
 
+
+def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
 # ── Schemas ───────────────────────────────────────────────────────
 class RegisterIn(BaseModel):
     name: str
