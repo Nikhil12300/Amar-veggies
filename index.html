@@ -369,6 +369,38 @@ async function deliveryApiFetch(path, opts = {}) {
   return data;
 }
 
+function canUseNotifications() {
+  return "Notification" in window;
+}
+
+async function requestNotificationPermission(toast) {
+  if (!canUseNotifications()) {
+    toast("Notifications are not supported on this device", "error");
+    return false;
+  }
+
+  const permission = await Notification.requestPermission();
+
+  if (permission === "granted") {
+    toast("Notifications enabled ✓");
+    return true;
+  }
+
+  toast("Notifications were not enabled", "error");
+  return false;
+}
+
+function showOrderNotification(title, body) {
+  if (!canUseNotifications()) return;
+  if (Notification.permission !== "granted") return;
+
+  new Notification(title, {
+    body,
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png"
+  });
+}
+
 async function getPreviousCheckoutDetails() {
   const orders = await apiFetch("/orders");
   if (!Array.isArray(orders) || orders.length === 0) return null;
@@ -783,6 +815,10 @@ function HomePage() {
   const {nav} = useContext(RouterCtx);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    canUseNotifications() && Notification.permission === "granted"
+  );
+  const toast = useContext(ToastCtx);
   const {setProducts} = useContext(CartCtx);
   const [featured, setFeatured] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -819,6 +855,11 @@ function HomePage() {
     setInstallPrompt(null);
   };
 
+  const enableNotifications = async () => {
+    const ok = await requestNotificationPermission(toast);
+    setNotificationsEnabled(ok);
+  };
+
   useEffect(() => {
     apiFetch("/products?featured=true").then(d => { setFeatured(d); setProducts(p => { const m = {}; p.forEach(x => m[x.id]=x); d.forEach(x => m[x.id]=x); return Object.values(m); }); }).catch(()=>{});
     apiFetch("/products").then(d => {
@@ -843,6 +884,11 @@ function HomePage() {
             {installPrompt && !isInstalled && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && (
               <button className="btn-hero btn-hero-outline" onClick={installApp}>
                 📲 Install App
+              </button>
+            )}
+            {canUseNotifications() && !notificationsEnabled && (
+              <button className="btn-hero btn-hero-outline" onClick={enableNotifications}>
+                🔔 Enable Notifications
               </button>
             )}
           </div>
@@ -1450,10 +1496,45 @@ function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [tracking, setTracking] = useState(null);
+  const [lastStatuses, setLastStatuses] = useState({});
 
   useEffect(() => {
     if (!user) { nav("login"); return; }
-    apiFetch("/orders").then(setOrders).catch(()=>{}).finally(()=>setLoading(false));
+
+    let intervalId;
+
+    const loadOrders = async () => {
+      try {
+        const data = await apiFetch("/orders");
+
+        setOrders(prevOrders => {
+          const previousMap = {};
+          prevOrders.forEach(o => previousMap[o.id] = o.status);
+
+          data.forEach(o => {
+            if (
+              previousMap[o.id] &&
+              previousMap[o.id] !== o.status &&
+              Notification.permission === "granted"
+            ) {
+              showOrderNotification(
+                "Amar Veggies Order Update",
+                `Order #${o.id.slice(-8).toUpperCase()} is now ${o.status.replace(/_/g, " ")}`
+              );
+            }
+          });
+
+          return data;
+        });
+      } catch (e) {}
+
+      setLoading(false);
+    };
+
+    loadOrders();
+    intervalId = setInterval(loadOrders, 15000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
