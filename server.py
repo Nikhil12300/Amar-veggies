@@ -164,10 +164,10 @@ def init_db():
         for migration in migrations:
             try:
                 conn.execute(text(migration))
+                conn.commit()
             except Exception as e:
+                conn.rollback()
                 print(f"Migration skipped: {e}")
-
-    conn.commit()
 
     print("Database migration completed")
 
