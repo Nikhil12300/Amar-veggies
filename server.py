@@ -514,26 +514,26 @@ def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer), db: 
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
-def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    if not user.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return user
-
-def get_current_delivery_partner(creds: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)) -> Dict[str, Any]:
+def get_current_delivery_partner(
+    creds: HTTPAuthorizationCredentials = Depends(bearer),
+    db: Session = Depends(get_db)
+) -> DeliveryPartner:
     if not creds:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail="Delivery partner login required")
+
     payload = decode_token(creds.credentials)
     if not payload or payload.get("role") != "delivery":
-        raise HTTPException(status_code=401, detail="Invalid or expired delivery token")
+        raise HTTPException(status_code=401, detail="Invalid delivery token")
+
     partner_id = payload.get("sub")
     if not isinstance(partner_id, str):
         raise HTTPException(status_code=401, detail="Invalid delivery token")
-    partner = db.query(DeliveryPartner).filter(DeliveryPartner.id == partner_id, DeliveryPartner.active == 1).first()
-    partner_dict = model_to_dict(partner)
-    if not partner_dict:
-        raise HTTPException(status_code=401, detail="Delivery partner not found")
-    partner_dict.pop("password", None)
-    return partner_dict
+
+    partner = db.query(DeliveryPartner).filter(DeliveryPartner.id == partner_id).first()
+    if not partner or not partner.active:
+        raise HTTPException(status_code=401, detail="Delivery partner not found or inactive")
+
+    return partner
 
 # ── Schemas ───────────────────────────────────────────────────────
 class RegisterIn(BaseModel):
@@ -712,15 +712,13 @@ def delivery_login(body: DeliveryLoginIn, db: Session = Depends(get_db)):
 
 @app.get("/api/delivery/orders")
 def delivery_orders(
-    partner: Dict[str, Any] = Depends(get_current_delivery_partner),
+    partner: DeliveryPartner = Depends(get_current_delivery_partner),
     db: Session = Depends(get_db)
 ):
     rows = (
         db.query(Order)
-        .filter(
-            Order.delivery_partner == partner.get("name"),
-            Order.status.notin_(["delivered", "cancelled"])
-        )
+        .filter(Order.delivery_partner == partner.name)
+        .filter(Order.status.notin_(["delivered", "cancelled"]))
         .order_by(Order.created_at.desc())
         .all()
     )
@@ -730,35 +728,34 @@ def delivery_orders(
 def delivery_update_order_status(
     oid: str,
     body: OrderStatusIn,
-    partner: Dict[str, Any] = Depends(get_current_delivery_partner),
+    partner: DeliveryPartner = Depends(get_current_delivery_partner),
     db: Session = Depends(get_db)
 ):
     allowed_statuses = ["out_for_delivery", "delivered"]
     if body.status not in allowed_statuses:
-        raise HTTPException(400, f"Delivery partners can only set: {allowed_statuses}")
+        raise HTTPException(403, "Delivery partners can only mark orders picked up or delivered")
 
-    order = db.query(Order).filter(
-        Order.id == oid,
-        Order.delivery_partner == partner.get("name")
-    ).first()
-
+    order = db.query(Order).filter(Order.id == oid).first()
     if not order:
-        raise HTTPException(404, "Assigned order not found")
+        raise HTTPException(404, "Order not found")
 
-    if order.status in ["delivered", "cancelled"]:
+    if order.delivery_partner != partner.name:
+        raise HTTPException(403, "This order is not assigned to you")
+
+    if order.status in ["cancelled", "delivered"]:
         raise HTTPException(400, "This order can no longer be updated")
 
     if body.status == "out_for_delivery" and order.status not in ["confirmed", "packed"]:
-        raise HTTPException(400, "Only confirmed orders can be picked up")
+        raise HTTPException(400, "Order must be confirmed before pickup")
 
     if body.status == "delivered" and order.status != "out_for_delivery":
-        raise HTTPException(400, "Only out-for-delivery orders can be marked delivered")
+        raise HTTPException(400, "Order must be out for delivery before marking delivered")
 
     order_dict = model_to_dict(order) or {}
     timeline = order_dict.get("timeline", [])
     if not isinstance(timeline, list):
         timeline = []
-    timeline.append({"status": body.status, "at": now_iso(), "by": partner.get("name")})
+    timeline.append({"status": body.status, "at": now_iso()})
 
     order.status = body.status
     order.timeline = json.dumps(timeline)

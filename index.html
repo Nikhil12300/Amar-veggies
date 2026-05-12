@@ -339,8 +339,16 @@ const GOOGLE_MAPS_API_KEY = window.GOOGLE_MAPS_API_KEY;
    API HELPERS
 ═══════════════════════════════════════════════════════════ */
 async function apiFetch(path, opts = {}) {
-  const isDeliveryApi = path.startsWith("/delivery") && path !== "/delivery/login";
-  const token = isDeliveryApi ? localStorage.getItem("delivery_token") : localStorage.getItem("hv_token");
+  const token = localStorage.getItem("hv_token");
+  const headers = {"Content-Type": "application/json", ...(token ? {Authorization: `Bearer ${token}`} : {}), ...(opts.headers || {})};
+  const res = await fetch(`${API}${path}`, {...opts, headers});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "Request failed");
+  return data;
+}
+
+async function deliveryApiFetch(path, opts = {}) {
+  const token = localStorage.getItem("delivery_token");
   const headers = {"Content-Type": "application/json", ...(token ? {Authorization: `Bearer ${token}`} : {}), ...(opts.headers || {})};
   const res = await fetch(`${API}${path}`, {...opts, headers});
   const data = await res.json().catch(() => ({}));
@@ -702,8 +710,8 @@ function Navbar() {
           <div className="nav-links">
             <button className={`nav-btn ${page==="shop"?"active":""}`} onClick={() => nav("shop")}>Shop</button>
             {user && <button className={`nav-btn ${page==="orders"?"active":""}`} onClick={() => nav("orders")}>My Orders</button>}
-            <button className={`nav-btn ${page==="delivery"?"active":""}`} onClick={() => nav("delivery")}>Delivery Login</button>
             {user?.is_admin && <button className={`nav-btn ${page==="admin"?"active":""}`} onClick={() => nav("admin")}>Admin</button>}
+            {!user && <button className={`nav-btn ${page==="delivery"?"active":""}`} onClick={() => nav("delivery")}>Delivery Partner Login</button>}
             {user
               ? <div className="nav-user" onClick={() => { logout(); nav("home"); }}>
                   <span className="nav-user-avatar">{user.name[0].toUpperCase()}</span>
@@ -747,8 +755,8 @@ function Navbar() {
           ? <button className="bottom-nav-btn" onClick={() => { logout(); nav("home"); }}>
               <span className="bnb-icon">🚪</span>Log out
             </button>
-          : <button className={`bottom-nav-btn ${page==="register"?"active":""}`} onClick={() => nav("register")}>
-              <span className="bnb-icon">✍️</span>Register
+          : <button className={`bottom-nav-btn ${page==="delivery"?"active":""}`} onClick={() => nav("delivery")}>
+              <span className="bnb-icon">🚚</span>Delivery
             </button>}
       </div>
     </>
@@ -1570,7 +1578,6 @@ function LoginPage() {
           <div className="auth-row"><label className="auth-check"><input type="checkbox" checked={form.remember} onChange={e=>setForm(f=>({...f,remember:e.target.checked}))}/>Remember Me</label><button className="auth-link" onClick={()=>setForgotOpen(true)}>Forgot Password?</button></div>
           <button className="auth-submit" onClick={submit} disabled={loading}>{loading?"Signing in…":"Sign in"}</button><div className="auth-or">OR</div><button className="google-btn" onClick={googleSignIn}><span className="google-g">G</span>Continue with Google</button>
           <div className="auth-switch">New here? <button onClick={() => nav("register")}>Create an account</button></div>
-          <div className="auth-switch" style={{marginTop:".8rem"}}>Delivery partner? <button onClick={() => nav("delivery")}>Open delivery login</button></div>
         </div>
       </div>
       {forgotOpen && <ForgotPasswordModal onClose={()=>setForgotOpen(false)}/>} 
@@ -1872,7 +1879,7 @@ function DeliveryPartnerPage() {
 
     setLoginLoading(true);
     try {
-      const data = await apiFetch("/delivery/login", {
+      const data = await deliveryApiFetch("/delivery/login", {
         method: "POST",
         body: JSON.stringify(form)
       });
@@ -1899,7 +1906,7 @@ function DeliveryPartnerPage() {
     if (!loggedPartner) return;
     setLoading(true);
     try {
-      const assigned = await apiFetch("/delivery/orders");
+      const assigned = await deliveryApiFetch("/delivery/orders");
       setOrders(assigned);
     } catch (e) {
       toast(e.message, "error");
@@ -1913,7 +1920,7 @@ function DeliveryPartnerPage() {
 
   const updateStatus = async (oid, status) => {
     try {
-      await apiFetch(`/delivery/orders/${oid}/status`, {
+      await deliveryApiFetch(`/delivery/orders/${oid}/status`, {
         method: "PUT",
         body: JSON.stringify({ status })
       });
@@ -1928,7 +1935,7 @@ function DeliveryPartnerPage() {
     return (
       <div className="page container" style={{paddingTop:"2rem",maxWidth:480}}>
         <h1 className="page-title">Delivery Partner Login</h1>
-        <p className="page-sub">Login to view assigned deliveries</p>
+        <p className="page-sub">Separate access for delivery partners. This is not the admin panel.</p>
 
         <div className="form-card" style={{margin:"1rem 0"}}>
           <div className="field">
