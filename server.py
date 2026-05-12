@@ -80,6 +80,15 @@ class User(Base):
     is_admin: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
+class DeliveryPartner(Base):
+    __tablename__ = "delivery_partners"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    phone: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    password: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
 class OTP(Base):
     __tablename__ = "otps"
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -597,6 +606,10 @@ class OrderStatusIn(BaseModel):
 class AssignDeliveryIn(BaseModel):
     delivery_partner: str
 
+class DeliveryLoginIn(BaseModel):
+    phone: str
+    password: str
+
 # ── Seed Admin ────────────────────────────────────────────────────
 def seed_admin():
     if not ADMIN_EMAIL or not ADMIN_PASSWORD:
@@ -624,8 +637,62 @@ def seed_admin():
     finally:
         db.close()
 
+def seed_delivery_partners():
+    db = SessionLocal()
+    try:
+        partners = [
+            ("Nikhil", "9999999991", "nikhil123"),
+            ("Dhirendra", "9999999992", "dhirendra123"),
+            ("Amar", "9999999993", "amar123"),
+        ]
+
+        for name, phone, password in partners:
+            existing = db.query(DeliveryPartner).filter(DeliveryPartner.phone == phone).first()
+            if not existing:
+                db.add(DeliveryPartner(
+                    id=str(uuid.uuid4()),
+                    name=name,
+                    phone=phone,
+                    password=hash_password(password),
+                    active=1,
+                    created_at=now_iso(),
+                ))
+            else:
+                existing.name = name
+                existing.password = hash_password(password)
+                existing.active = 1
+
+        db.commit()
+        print("✅ Delivery partners seeded")
+    finally:
+        db.close()
+
 init_db()
 seed_admin()
+seed_delivery_partners()
+
+# ── Delivery Partner Auth ───────────────────────────────────────
+@app.post("/api/delivery/login")
+def delivery_login(body: DeliveryLoginIn, db: Session = Depends(get_db)):
+    phone = normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(400, "Enter a valid mobile number")
+
+    partner = db.query(DeliveryPartner).filter(DeliveryPartner.phone == phone).first()
+
+    if not partner or not verify_password(body.password, partner.password) or not partner.active:
+        raise HTTPException(401, "Invalid phone or password")
+
+    token = create_token({"sub": partner.id, "role": "delivery"})
+
+    return {
+        "token": token,
+        "partner": {
+            "id": partner.id,
+            "name": partner.name,
+            "phone": partner.phone,
+        }
+    }
 
 # ── Auth ──────────────────────────────────────────────────────────
 @app.post("/api/auth/register")

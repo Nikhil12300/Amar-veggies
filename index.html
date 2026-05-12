@@ -1858,7 +1858,7 @@ function DeliveryPartnerPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const DELIVERY_PARTNERS = ["Rahul", "Amit", "Self Delivery"];
+  const DELIVERY_PARTNERS = ["Nikhil", "Dhirendra", "Amar"];
 
   const loadOrders = async (selectedPartner) => {
     setLoading(true);
@@ -2011,7 +2011,7 @@ function AdminPage() {
 
   const navItems = [["dashboard","📊","Dashboard"],["products","🥦","Products"],["orders","📦","Orders"]];
   const ORDER_STATUSES = ["pending","confirmed","out_for_delivery","delivered","cancelled"];
-  const DELIVERY_PARTNERS = ["", "Self Delivery", "Rahul", "Amit"];
+  const DELIVERY_PARTNERS = ["", "Amar", "Nikhil", "Dhirendra"];
 
   return (
     <div className="admin-layout">
