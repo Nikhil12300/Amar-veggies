@@ -1852,20 +1852,54 @@ function ProductFormModal({product, onClose, onSaved}) {
    ADMIN PAGE
 ═══════════════════════════════════════════════════════════ */
 function DeliveryPartnerPage() {
-  const {nav} = useContext(RouterCtx);
   const toast = useContext(ToastCtx);
-  const [partner, setPartner] = useState("");
+  const [partner, setPartner] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("delivery_partner") || "null"); }
+    catch { return null; }
+  });
+  const [form, setForm] = useState({ phone: "", password: "" });
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
 
-  const DELIVERY_PARTNERS = ["Nikhil", "Dhirendra", "Amar"];
+  const loginDelivery = async () => {
+    if (!form.phone || !form.password) {
+      toast("Enter phone and password", "error");
+      return;
+    }
 
-  const loadOrders = async (selectedPartner) => {
+    setLoginLoading(true);
+    try {
+      const data = await apiFetch("/delivery/login", {
+        method: "POST",
+        body: JSON.stringify(form)
+      });
+
+      localStorage.setItem("delivery_token", data.token);
+      localStorage.setItem("delivery_partner", JSON.stringify(data.partner));
+      setPartner(data.partner);
+      toast(`Welcome, ${data.partner.name} ✓`);
+      loadOrders(data.partner);
+    } catch (e) {
+      toast(e.message, "error");
+    }
+    setLoginLoading(false);
+  };
+
+  const logoutDelivery = () => {
+    localStorage.removeItem("delivery_token");
+    localStorage.removeItem("delivery_partner");
+    setPartner(null);
+    setOrders([]);
+  };
+
+  const loadOrders = async (loggedPartner = partner) => {
+    if (!loggedPartner) return;
     setLoading(true);
     try {
       const allOrders = await apiFetch("/orders");
       const assigned = allOrders.filter(o =>
-        o.delivery_partner === selectedPartner &&
+        o.delivery_partner === loggedPartner.name &&
         o.status !== "delivered" &&
         o.status !== "cancelled"
       );
@@ -1876,11 +1910,15 @@ function DeliveryPartnerPage() {
     setLoading(false);
   };
 
+  useEffect(() => {
+    if (partner) loadOrders(partner);
+  }, []);
+
   const updateStatus = async (oid, status) => {
     try {
       await apiFetch(`/orders/${oid}/status`, {
         method: "PUT",
-        body: JSON.stringify({status})
+        body: JSON.stringify({ status })
       });
       toast("Order updated ✓");
       loadOrders(partner);
@@ -1889,25 +1927,62 @@ function DeliveryPartnerPage() {
     }
   };
 
+  if (!partner) {
+    return (
+      <div className="page container" style={{paddingTop:"2rem",maxWidth:480}}>
+        <h1 className="page-title">Delivery Partner Login</h1>
+        <p className="page-sub">Login to view assigned deliveries</p>
+
+        <div className="form-card" style={{margin:"1rem 0"}}>
+          <div className="field">
+            <label>Phone Number</label>
+            <input
+              placeholder="9999999991"
+              value={form.phone}
+              onChange={e => setForm(f => ({...f, phone:e.target.value}))}
+            />
+          </div>
+
+          <div className="field">
+            <label>Password</label>
+            <input
+              type="password"
+              placeholder="Enter password"
+              value={form.password}
+              onChange={e => setForm(f => ({...f, password:e.target.value}))}
+              onKeyDown={e => e.key === "Enter" && loginDelivery()}
+            />
+          </div>
+
+          <button className="btn btn-primary btn-full" onClick={loginDelivery} disabled={loginLoading}>
+            {loginLoading ? "Logging in…" : "Login"}
+          </button>
+
+          <p className="text-xs text-muted mt-2">
+            Test: 9999999991 / nikhil123
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page container" style={{paddingTop:"2rem",maxWidth:900}}>
-      <h1 className="page-title">Delivery Partner Panel</h1>
-      <p className="page-sub">View assigned orders and update delivery status</p>
-
-      <div className="field" style={{maxWidth:320}}>
-        <label>Select Delivery Partner</label>
-        <select value={partner} onChange={e => {
-          setPartner(e.target.value);
-          if (e.target.value) loadOrders(e.target.value);
-        }}>
-          <option value="">Choose partner</option>
-          {DELIVERY_PARTNERS.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
+      <div className="flex justify-between items-center mb-2 flex-wrap gap-1">
+        <div>
+          <h1 className="page-title">Delivery Partner Panel</h1>
+          <p className="page-sub">Logged in as {partner.name}</p>
+        </div>
+        <button className="btn btn-ghost" onClick={logoutDelivery}>Logout</button>
       </div>
+
+      <button className="btn btn-primary mb-2" onClick={() => loadOrders(partner)}>
+        Refresh Orders
+      </button>
 
       {loading && <p>Loading assigned orders…</p>}
 
-      {!loading && partner && orders.length === 0 && (
+      {!loading && orders.length === 0 && (
         <div className="empty-state">
           <div className="empty-state-icon">🚚</div>
           <h3>No assigned orders</h3>
