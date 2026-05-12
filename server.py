@@ -184,6 +184,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://amarveggies.netlify.app",
+        "https://amar.veggies.workers.dev",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
         "http://localhost:5500",
