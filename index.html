@@ -702,6 +702,7 @@ function Navbar() {
             <button className={`nav-btn ${page==="shop"?"active":""}`} onClick={() => nav("shop")}>Shop</button>
             {user && <button className={`nav-btn ${page==="orders"?"active":""}`} onClick={() => nav("orders")}>My Orders</button>}
             {user?.is_admin && <button className={`nav-btn ${page==="admin"?"active":""}`} onClick={() => nav("admin")}>Admin</button>}
+            {user?.is_admin && <button className={`nav-btn ${page==="delivery"?"active":""}`} onClick={() => nav("delivery")}>Delivery</button>}
             {user
               ? <div className="nav-user" onClick={() => { logout(); nav("home"); }}>
                   <span className="nav-user-avatar">{user.name[0].toUpperCase()}</span>
@@ -2022,6 +2023,7 @@ function AdminPage() {
               <span>{icon}</span> {label}
             </button>
           ))}
+          <button className="admin-nav-btn" onClick={() => nav("delivery")}><span>🚚</span> Delivery Panel</button>
           <button className="admin-nav-btn" onClick={() => nav("shop")}><span>🛒</span> Shop</button>
           <button className="admin-nav-btn" onClick={() => { logout(); nav("home"); }}>
             🚪 Logout
