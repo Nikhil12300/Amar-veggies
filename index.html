@@ -349,10 +349,18 @@ async function apiFetch(path, opts = {}) {
 
 async function deliveryApiFetch(path, opts = {}) {
   const token = localStorage.getItem("delivery_token");
-  const headers = {"Content-Type": "application/json", ...(token ? {Authorization: `Bearer ${token}`} : {}), ...(opts.headers || {})};
-  const res = await fetch(`${API}${path}`, {...opts, headers});
+
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(opts.headers || {})
+  };
+
+  const res = await fetch(`${API}${path}`, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
+
   if (!res.ok) throw new Error(data.detail || "Request failed");
+
   return data;
 }
 
@@ -1399,11 +1407,31 @@ function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [tracking, setTracking] = useState(null);
 
   useEffect(() => {
     if (!user) { nav("login"); return; }
     apiFetch("/orders").then(setOrders).catch(()=>{}).finally(()=>setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+
+    let intervalId;
+    setTracking(null);
+
+    const loadTracking = async () => {
+      try {
+        const data = await apiFetch(`/orders/${selected.id}/tracking`);
+        setTracking(data);
+      } catch (e) {}
+    };
+
+    loadTracking();
+    intervalId = setInterval(loadTracking, 10000);
+
+    return () => clearInterval(intervalId);
+  }, [selected]);
 
   const ALL_STATUSES = ["pending","confirmed","out_for_delivery","delivered"];
   const statusLabel = {pending:"Order Placed",confirmed:"Confirmed",out_for_delivery:"Out for Delivery",delivered:"Delivered"};
@@ -1475,6 +1503,35 @@ function OrdersPage() {
             <p className="text-sm text-muted mt-2">📍 {selected.address} · 📞 {selected.phone}</p>
             {selected.delivery_maps_url && <p className="text-sm mt-1"><a href={selected.delivery_maps_url} target="_blank" style={{color:"var(--leaf)",fontWeight:700}}>Open pinned location</a></p>}
             <p className="text-sm text-muted">🕒 Slot: {selected.slot}</p>
+            {tracking?.delivery_live_lat && tracking?.delivery_live_lng && (
+              <div style={{
+                background: "var(--cream)",
+                borderRadius: 12,
+                padding: "1rem",
+                marginTop: "1rem"
+              }}>
+                <div className="fw-700 mb-1">ðŸšš Live Delivery Tracking</div>
+
+                <p className="text-sm text-muted mb-1">
+                  Partner: {tracking.delivery_partner || "Assigned partner"}
+                </p>
+
+                <p className="text-xs text-muted mb-2">
+                  Last updated: {tracking.delivery_last_updated
+                    ? new Date(tracking.delivery_last_updated).toLocaleTimeString("en-IN")
+                    : "Just now"}
+                </p>
+
+                <iframe
+                  width="100%"
+                  height="260"
+                  style={{border:0, borderRadius:12, marginTop:".75rem"}}
+                  loading="lazy"
+                  allowFullScreen
+                  src={`https://www.google.com/maps?q=${tracking.delivery_live_lat},${tracking.delivery_live_lng}&z=16&output=embed`}
+                ></iframe>
+              </div>
+            )}
             <div className="modal-footer"><button className="btn btn-ghost" onClick={() => setSelected(null)}>Close</button></div>
           </div>
         </div>
@@ -1870,6 +1927,8 @@ function DeliveryPartnerPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
+  const [trackingOrderId, setTrackingOrderId] = useState(null);
+  const watchIdRef = useRef(null);
 
   const loginDelivery = async () => {
     if (!form.phone || !form.password) {
@@ -1896,9 +1955,14 @@ function DeliveryPartnerPage() {
   };
 
   const logoutDelivery = () => {
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
     localStorage.removeItem("delivery_token");
     localStorage.removeItem("delivery_partner");
     setPartner(null);
+    setTrackingOrderId(null);
     setOrders([]);
   };
 
@@ -1918,6 +1982,14 @@ function DeliveryPartnerPage() {
     if (partner) loadOrders(partner);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
+
   const updateStatus = async (oid, status) => {
     try {
       await deliveryApiFetch(`/delivery/orders/${oid}/status`, {
@@ -1929,6 +2001,56 @@ function DeliveryPartnerPage() {
     } catch (e) {
       toast(e.message, "error");
     }
+  };
+
+  const startLiveTracking = (orderId) => {
+    if (!navigator.geolocation) {
+      toast("Location is not supported on this device", "error");
+      return;
+    }
+
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
+    setTrackingOrderId(orderId);
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      async (pos) => {
+        try {
+          await deliveryApiFetch("/delivery/location", {
+            method: "POST",
+            body: JSON.stringify({
+              order_id: orderId,
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude
+            })
+          });
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      },
+      () => {
+        toast("Location permission denied", "error");
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 5000,
+        timeout: 10000
+      }
+    );
+
+    toast("Live tracking started âœ“");
+  };
+
+  const stopLiveTracking = () => {
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    setTrackingOrderId(null);
+    toast("Live tracking stopped");
   };
 
   if (!partner) {
@@ -2032,6 +2154,16 @@ function DeliveryPartnerPage() {
             {o.status === "out_for_delivery" && (
               <button className="btn btn-primary" onClick={() => updateStatus(o.id, "delivered")}>
                 Mark Delivered
+              </button>
+            )}
+
+            {trackingOrderId === o.id ? (
+              <button className="btn btn-danger" onClick={stopLiveTracking}>
+                Stop Live Tracking
+              </button>
+            ) : (
+              <button className="btn btn-primary" onClick={() => startLiveTracking(o.id)}>
+                Share Live Location
               </button>
             )}
           </div>

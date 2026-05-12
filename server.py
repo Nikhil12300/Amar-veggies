@@ -128,6 +128,9 @@ class Order(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     delivery_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     delivery_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    delivery_live_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    delivery_live_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    delivery_last_updated: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     delivery_place_id: Mapped[str] = mapped_column(Text, default="")
     delivery_maps_url: Mapped[str] = mapped_column(Text, default="")
     delivery_partner: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -153,6 +156,9 @@ def init_db():
             "ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(255);",
             "ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(255);",
             "ALTER TABLE orders ADD COLUMN delivery_partner VARCHAR(255);",
+            "ALTER TABLE orders ADD COLUMN delivery_live_lat FLOAT;",
+            "ALTER TABLE orders ADD COLUMN delivery_live_lng FLOAT;",
+            "ALTER TABLE orders ADD COLUMN delivery_last_updated VARCHAR(255);",
         ]
 
         for migration in migrations:
@@ -517,21 +523,24 @@ def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer), db: 
 def get_current_delivery_partner(
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db)
-) -> DeliveryPartner:
+):
     if not creds:
-        raise HTTPException(status_code=401, detail="Delivery partner login required")
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     payload = decode_token(creds.credentials)
+
     if not payload or payload.get("role") != "delivery":
         raise HTTPException(status_code=401, detail="Invalid delivery token")
 
     partner_id = payload.get("sub")
-    if not isinstance(partner_id, str):
-        raise HTTPException(status_code=401, detail="Invalid delivery token")
 
-    partner = db.query(DeliveryPartner).filter(DeliveryPartner.id == partner_id).first()
-    if not partner or not partner.active:
-        raise HTTPException(status_code=401, detail="Delivery partner not found or inactive")
+    partner = db.query(DeliveryPartner).filter(
+        DeliveryPartner.id == partner_id,
+        DeliveryPartner.active == 1
+    ).first()
+
+    if not partner:
+        raise HTTPException(status_code=401, detail="Delivery partner not found")
 
     return partner
 
@@ -627,6 +636,11 @@ class OrderStatusIn(BaseModel):
 
 class AssignDeliveryIn(BaseModel):
     delivery_partner: str
+
+class DeliveryLocationIn(BaseModel):
+    order_id: str
+    lat: float
+    lng: float
 
 class DeliveryLoginIn(BaseModel):
     phone: str
@@ -729,6 +743,36 @@ def delivery_orders(
         .all()
     )
     return models_to_list(rows)
+
+@app.post("/api/delivery/location")
+def update_delivery_location(
+    body: DeliveryLocationIn,
+    partner: DeliveryPartner = Depends(get_current_delivery_partner),
+    db: Session = Depends(get_db)
+):
+    order = db.query(Order).filter(Order.id == body.order_id).first()
+
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    if order.delivery_partner != partner.name:
+        raise HTTPException(403, "This order is not assigned to you")
+
+    if order.status not in ["out_for_delivery", "confirmed"]:
+        raise HTTPException(400, "Live tracking is only available for active deliveries")
+
+    order.delivery_live_lat = body.lat
+    order.delivery_live_lng = body.lng
+    order.delivery_last_updated = now_iso()
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "lat": body.lat,
+        "lng": body.lng,
+        "updated_at": order.delivery_last_updated
+    }
 
 @app.put("/api/delivery/orders/{oid}/status")
 def delivery_update_order_status(
@@ -1268,6 +1312,35 @@ def get_order(oid: str, user: Dict[str, Any] = Depends(get_current_user), db: Se
     if not user.get("is_admin") and order_dict.get("user_id") != user.get("id"):
         raise HTTPException(403, "Access denied")
     return order_dict
+
+@app.get("/api/orders/{oid}/tracking")
+def get_order_tracking(
+    oid: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    order = db.query(Order).filter(Order.id == oid).first()
+
+    if order is None:
+        raise HTTPException(404, "Order not found")
+
+    order_dict = model_to_dict(order) or {}
+
+    if not user.get("is_admin") and order_dict.get("user_id") != user.get("id"):
+        raise HTTPException(403, "Access denied")
+
+    return {
+        "order_id": order.id,
+        "status": order.status,
+        "delivery_partner": order.delivery_partner,
+        "delivery_live_lat": order.delivery_live_lat,
+        "delivery_live_lng": order.delivery_live_lng,
+        "delivery_last_updated": order.delivery_last_updated,
+        "delivery_address": order.address,
+        "delivery_lat": order.delivery_lat,
+        "delivery_lng": order.delivery_lng,
+        "delivery_maps_url": order.delivery_maps_url,
+    }
 
 @app.put("/api/orders/{oid}/status", dependencies=[Depends(require_admin)])
 def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get_db)):
