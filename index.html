@@ -781,10 +781,43 @@ function Navbar() {
 ═══════════════════════════════════════════════════════════ */
 function HomePage() {
   const {nav} = useContext(RouterCtx);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
   const {setProducts} = useContext(CartCtx);
   const [featured, setFeatured] = useState([]);
   const [categories, setCategories] = useState([]);
   const [stats, setStats] = useState({products:0, orders:0});
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+
+    window.addEventListener("beforeinstallprompt", handler);
+
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      setIsInstalled(true);
+    }
+
+    window.addEventListener("appinstalled", () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    });
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handler);
+    };
+  }, []);
+
+  const installApp = async () => {
+    if (!installPrompt) return;
+
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+
+    setInstallPrompt(null);
+  };
 
   useEffect(() => {
     apiFetch("/products?featured=true").then(d => { setFeatured(d); setProducts(p => { const m = {}; p.forEach(x => m[x.id]=x); d.forEach(x => m[x.id]=x); return Object.values(m); }); }).catch(()=>{});
@@ -807,7 +840,11 @@ function HomePage() {
           <p className="hero-sub">Handpicked seasonal fruits and vegetables delivered with care. No middlemen, just pure freshness.</p>
           <div className="hero-actions">
             <button className="btn-hero btn-hero-primary" onClick={() => nav("shop")}>Shop Now →</button>
-            {false && <button className="btn-hero btn-hero-outline">Learn More</button>}
+            {installPrompt && !isInstalled && (
+              <button className="btn-hero btn-hero-outline" onClick={installApp}>
+                📲 Install App
+              </button>
+            )}
           </div>
           <div className="hero-stats">
             <div><div className="hero-stat-val">{stats.products}+</div><div className="hero-stat-label">Fresh Items</div></div>
