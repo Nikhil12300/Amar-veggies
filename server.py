@@ -292,7 +292,8 @@ def send_push_notification(token: Optional[str], title: str, body: str):
             token=token
         )
 
-        messaging.send(message)
+        response = messaging.send(message)
+        print("Push sent:", response)
         return True
 
     except Exception as e:
@@ -1476,6 +1477,17 @@ def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get
     order.timeline = json.dumps(timeline)
     db.commit()
     db.refresh(order)
+
+    customer = db.query(User).filter(User.id == order.user_id).first()
+
+    status_text = body.status.replace("_", " ").title()
+
+    if customer:
+        send_push_notification(
+            customer.fcm_token,
+            "Amar Veggies Order Update",
+            f"Your order #{order.id[-8:].upper()} is now {status_text}"
+        )
 
     try:
         send_whatsapp_customer_status(order, body.status)
