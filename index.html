@@ -905,6 +905,7 @@ function Navbar() {
 ═══════════════════════════════════════════════════════════ */
 function HomePage() {
   const {nav} = useContext(RouterCtx);
+  const {user} = useContext(AuthCtx);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(
@@ -978,7 +979,7 @@ function HomePage() {
                 📲 Install App
               </button>
             )}
-            {canUseNotifications() && !notificationsEnabled && (
+            {user && canUseNotifications() && !notificationsEnabled && (
               <button className="btn-hero btn-hero-outline" onClick={enableNotifications}>
                 🔔 Enable Notifications
               </button>
