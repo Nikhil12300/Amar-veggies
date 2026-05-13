@@ -1,0 +1,79 @@
+mutation CreateDemoData @transaction @auth(level: USER, insecureReason: "This operation is for seeding demo data and can be run by any logged-in user.") {
+  user_insertMany(data: [
+    {
+      id: "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+      displayName: "Alice Smith",
+      email: "alice@example.com",
+      role: "Consumer",
+      createdAt: "2023-01-01T10:00:00Z"
+    },
+    {
+      id: "b2c3d4e5-f6a7-8901-2345-67890abcdef0",
+      displayName: "Bob Johnson",
+      email: "bob@example.com",
+      role: "FarmOwner",
+      createdAt: "2023-01-02T11:00:00Z"
+    }
+  ])
+  farm_insertMany(data: [
+    {
+      id: "c3d4e5f6-a7b8-9012-3456-7890abcdef01",
+      name: "Green Acres Farm",
+      location: "Rural Town, USA",
+      description: "A family-owned farm producing organic vegetables.",
+      createdAt: "2023-01-03T12:00:00Z",
+      contactEmail: "contact@greenacres.com",
+      ownerId: "b2c3d4e5-f6a7-8901-2345-67890abcdef0"
+    }
+  ])
+  produce_insertMany(data: [
+    {
+      id: "d4e5f6a7-b8c9-0123-4567-890abcdef012",
+      name: "Organic Carrots",
+      category: "Vegetables",
+      unit: "lb",
+      pricePerUnit: 2.99,
+      seasonal: true,
+      createdAt: "2023-01-04T13:00:00Z",
+      farmId: "c3d4e5f6-a7b8-9012-3456-7890abcdef01",
+      availableQuantity: 50
+    },
+    {
+      id: "e5f6a7b8-c9d0-1234-5678-90abcdef0123",
+      name: "Fresh Apples",
+      category: "Fruits",
+      unit: "each",
+      pricePerUnit: 0.75,
+      seasonal: false,
+      createdAt: "2023-01-05T14:00:00Z",
+      farmId: "c3d4e5f6-a7b8-9012-3456-7890abcdef01",
+      availableQuantity: 100
+    }
+  ])
+  order_insertMany(data: [
+    {
+      id: "f6a7b8c9-d0e1-2345-6789-0abcdef01234",
+      orderDate: "2023-01-06",
+      deliveryAddress: "123 Main St, Anytown, USA",
+      deliveryTimeSlot: "Morning",
+      totalAmount: 12.48,
+      status: "Pending",
+      createdAt: "2023-01-06T15:00:00Z",
+      consumerId: "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+    }
+  ])
+  orderItem_insertMany(data: [
+    {
+      orderId: "f6a7b8c9-d0e1-2345-6789-0abcdef01234",
+      produceId: "d4e5f6a7-b8c9-0123-4567-890abcdef012",
+      quantity: 2,
+      priceAtPurchase: 2.99
+    },
+    {
+      orderId: "f6a7b8c9-d0e1-2345-6789-0abcdef01234",
+      produceId: "e5f6a7b8-c9d0-1234-5678-90abcdef0123",
+      quantity: 8,
+      priceAtPurchase: 0.75
+    }
+  ])
+}

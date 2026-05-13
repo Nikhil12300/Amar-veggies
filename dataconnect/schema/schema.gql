@@ -1,0 +1,52 @@
+type User @table {
+  displayName: String!
+  email: String!
+  role: String!
+  createdAt: Timestamp!
+  photoUrl: String
+  address: String
+  phone: String
+}
+
+type Farm @table {
+  name: String!
+  location: String!
+  description: String!
+  createdAt: Timestamp!
+  contactEmail: String
+  website: String
+  logoUrl: String
+  owner: User
+}
+
+type Produce @table {
+  name: String!
+  category: String!
+  unit: String!
+  pricePerUnit: Float!
+  seasonal: Boolean!
+  createdAt: Timestamp!
+  description: String
+  imageUrl: String
+  availableQuantity: Int
+  farm: Farm
+}
+
+type Order @table {
+  orderDate: Date!
+  deliveryAddress: String!
+  deliveryTimeSlot: String!
+  totalAmount: Float!
+  status: String!
+  createdAt: Timestamp!
+  notes: String
+  consumer: User
+}
+
+type OrderItem @table(key: ["order", "produce"]) {
+  quantity: Int!
+  priceAtPurchase: Float!
+  farmNotes: String
+  order: Order!
+  produce: Produce!
+}

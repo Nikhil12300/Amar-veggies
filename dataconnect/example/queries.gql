@@ -1,0 +1,55 @@
+query ListAllProduce @auth(level: PUBLIC, insecureReason: "This operation is safe to expose to the public as it lists public produce information.") {
+  produces {
+    id
+    name
+    category
+    unit
+    pricePerUnit
+    seasonal
+    description
+    imageUrl
+    availableQuantity
+    farm {
+      id
+      name
+      location
+    }
+  }
+}
+
+mutation CreateNewUser($displayName: String!, $email: String!, $role: String!) @auth(level: PUBLIC, insecureReason: "This operation is safe to expose to the public for new user registration.") {
+  user_insert(data: {
+    displayName: $displayName,
+    email: $email,
+    role: $role,
+    createdAt_expr: "request.time"
+  }) {
+    id
+  }
+}
+
+query GetMyOrders @auth(level: USER) {
+  orders(where: {consumerId: {eq_expr: "auth.uid"}}) {
+    id
+    orderDate
+    deliveryAddress
+    status
+    totalAmount
+    orderItems {
+      quantity
+      priceAtPurchase
+      produce {
+        name
+        unit
+      }
+    }
+  }
+}
+
+mutation UpdateProduceQuantity($produceId: UUID!, $newQuantity: Int!) @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users as it only allows updating produce quantities.") {
+  produce_update(key: {id: $produceId}, data: {
+    availableQuantity: $newQuantity
+  }) {
+    id
+  }
+}

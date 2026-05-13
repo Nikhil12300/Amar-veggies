@@ -34,6 +34,13 @@ import requests
 import razorpay
 import hmac
 import hashlib
+try:
+    import firebase_admin  # type: ignore[import-not-found]
+    from firebase_admin import credentials, messaging  # type: ignore[import-not-found]
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    messaging = None
 
 # ── Config ────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "amar-veggies-local-secret")
@@ -62,6 +69,7 @@ TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "")
 ADMIN_WHATSAPP_NUMBER = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+FIREBASE_CREDENTIALS_JSON = os.getenv("FIREBASE_CREDENTIALS_JSON", "")
 
 # ── Database ──────────────────────────────────────────────────────
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -77,6 +85,7 @@ class User(Base):
     email: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
     password: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fcm_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_admin: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -152,6 +161,7 @@ def init_db():
 
     with engine.connect() as conn:
         migrations = [
+            "ALTER TABLE users ADD COLUMN fcm_token TEXT;",
             "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) DEFAULT 'pending';",
             "ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(255);",
             "ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(255);",
@@ -182,9 +192,9 @@ def init_db():
                 # No table rebuild needed for local development.
                 pass
     except Exception as e:
-        print(f"⚠️ Stock column migration skipped: {e}")
+        print(f"Stock column migration skipped: {e}")
 
-    print("✅ Database ready")
+    print("Database ready")
 
 def get_db():
     db = SessionLocal()
@@ -212,6 +222,24 @@ app.add_middleware(
 )
 
 # ── Helpers ───────────────────────────────────────────────────────
+def init_firebase():
+    if firebase_admin is None or credentials is None:
+        print("firebase-admin is not installed; push notifications disabled")
+        return
+
+    if firebase_admin._apps:
+        return
+
+    if not FIREBASE_CREDENTIALS_JSON:
+        print("Firebase credentials missing")
+        return
+
+    cred_dict = json.loads(FIREBASE_CREDENTIALS_JSON)
+    cred = credentials.Certificate(cred_dict)
+    firebase_admin.initialize_app(cred)
+
+init_firebase()
+
 def now_iso():
     return datetime.utcnow().isoformat()
 
@@ -243,9 +271,37 @@ def build_otp_response(otp: str) -> Dict[str, Any]:
         response["dev_otp"] = otp
     return response
 
+def send_push_notification(token: Optional[str], title: str, body: str):
+    if not token:
+        return False
+
+    if firebase_admin is None or messaging is None:
+        print("firebase-admin is not installed")
+        return False
+
+    if not firebase_admin._apps:
+        print("Firebase not initialized")
+        return False
+
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body
+            ),
+            token=token
+        )
+
+        messaging.send(message)
+        return True
+
+    except Exception as e:
+        print("Push notification failed:", e)
+        return False
+
 def send_email_otp(to_email: str, otp: str, purpose: str = "verification") -> bool:
     if not BREVO_API_KEY or not OTP_EMAIL_FROM:
-        print("⚠️ Brevo email config missing. OTP email was not sent.")
+        print("Brevo email config missing. OTP email was not sent.")
         return False
 
     subject = f"{otp} is your Amar Veggies OTP"
@@ -293,7 +349,7 @@ def send_whatsapp_order_notification(order_data: Dict[str, Any]) -> bool:
         or not TWILIO_WHATSAPP_NUMBER
         or not ADMIN_WHATSAPP_NUMBER
     ):
-        print("⚠️ Twilio WhatsApp config missing")
+        print("Twilio WhatsApp config missing")
         return False
 
     try:
@@ -335,16 +391,16 @@ Amar Veggies
             to=ADMIN_WHATSAPP_NUMBER,
         )
 
-        print("✅ WhatsApp notification sent")
+        print("WhatsApp notification sent")
         return True
 
     except Exception as e:
-        print("⚠️ WhatsApp send failed:", e)
+        print("WhatsApp send failed:", e)
         return False
 
 def send_whatsapp_customer_status(order, status):
     if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_WHATSAPP_NUMBER:
-        print("⚠️ Twilio WhatsApp config missing")
+        print("Twilio WhatsApp config missing")
         return False
 
     if not order.phone:
@@ -395,11 +451,11 @@ Thank you for ordering!
             to=f"whatsapp:+91{normalize_phone(order.phone)}"
         )
 
-        print("✅ Customer WhatsApp status update sent")
+        print("Customer WhatsApp status update sent")
         return True
 
     except Exception as e:
-        print("⚠️ Customer WhatsApp update failed:", e)
+        print("Customer WhatsApp update failed:", e)
         return False
 
 def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
@@ -595,6 +651,9 @@ class ForgotPasswordResetIn(BaseModel):
     otp: str
     password: str
 
+class FcmTokenIn(BaseModel):
+    token: str
+
 class ProductIn(BaseModel):
     name: str
     description: Optional[str] = ""
@@ -649,7 +708,7 @@ class DeliveryLoginIn(BaseModel):
 # ── Seed Admin ────────────────────────────────────────────────────
 def seed_admin():
     if not ADMIN_EMAIL or not ADMIN_PASSWORD:
-        print("⚠️ Admin env vars missing, skipping seed admin")
+        print("Admin env vars missing, skipping seed admin")
         return
     db = SessionLocal()
     try:
@@ -664,11 +723,11 @@ def seed_admin():
                 is_admin=1,
                 created_at=now_iso(),
             ))
-            print("✅ Seeded admin")
+            print("Seeded admin")
         else:
             existing.password = hash_password(ADMIN_PASSWORD)
             existing.is_admin = 1
-            print("✅ Admin password updated")
+            print("Admin password updated")
         db.commit()
     finally:
         db.close()
@@ -699,7 +758,7 @@ def seed_delivery_partners():
                 existing.active = 1
 
         db.commit()
-        print("✅ Delivery partners seeded")
+        print("Delivery partners seeded")
     finally:
         db.close()
 
@@ -812,10 +871,21 @@ def delivery_update_order_status(
     db.commit()
     db.refresh(order)
 
+    customer = db.query(User).filter(User.id == order.user_id).first()
+
+    status_text = body.status.replace("_", " ").title()
+
+    if customer:
+        send_push_notification(
+            customer.fcm_token,
+            "Amar Veggies Order Update",
+            f"Your order #{order.id[-8:].upper()} is now {status_text}"
+        )
+
     try:
         send_whatsapp_customer_status(order, body.status)
     except Exception as e:
-        print("⚠️ Customer WhatsApp notification error:", e)
+        print("Customer WhatsApp notification error:", e)
 
     return model_to_dict(order)
 
@@ -1069,6 +1139,22 @@ def forgot_password_reset(body: ForgotPasswordResetIn, db: Session = Depends(get
 def me(user: Dict[str, Any] = Depends(get_current_user)):
     return public_user(user)
 
+@app.post("/api/notifications/token")
+def save_fcm_token(
+    body: FcmTokenIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    u = db.query(User).filter(User.id == user["id"]).first()
+
+    if not u:
+        raise HTTPException(404, "User not found")
+
+    u.fcm_token = body.token
+    db.commit()
+
+    return {"ok": True}
+
 # ── Products ──────────────────────────────────────────────────────
 @app.get("/api/products")
 def list_products(category: Optional[str] = None, search: Optional[str] = None, featured: Optional[bool] = None, db: Session = Depends(get_db)):
@@ -1290,7 +1376,7 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
             "notes": body.notes or "",
         })
     except Exception as e:
-        print("⚠️ WhatsApp notification error:", e)
+        print("WhatsApp notification error:", e)
     result = model_to_dict(order) or {}
     result["delivery_directions_url"] = make_directions_url(body.delivery_lat, body.delivery_lng, body.address)
     return result
@@ -1394,7 +1480,7 @@ def update_order_status(oid: str, body: OrderStatusIn, db: Session = Depends(get
     try:
         send_whatsapp_customer_status(order, body.status)
     except Exception as e:
-        print("⚠️ Customer WhatsApp notification error:", e)
+        print("Customer WhatsApp notification error:", e)
 
     return model_to_dict(order)
 

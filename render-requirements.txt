@@ -11,3 +11,4 @@ requests==2.32.3
 twilio==9.6.1
 razorpay==1.4.2
 setuptools==80.9.0
+firebase-admin

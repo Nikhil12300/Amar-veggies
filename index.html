@@ -15,6 +15,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
@@ -399,6 +401,61 @@ function showOrderNotification(title, body) {
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png"
   });
+}
+
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+const FIREBASE_VAPID_KEY = "YOUR_VAPID_KEY";
+
+let firebaseMessaging = null;
+
+function initFirebaseMessaging() {
+  if (!("firebase" in window)) return null;
+
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+
+  firebaseMessaging = firebase.messaging();
+  return firebaseMessaging;
+}
+
+async function registerFcmToken(toast) {
+  try {
+    const permission = await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      toast("Notifications were not enabled", "error");
+      return false;
+    }
+
+    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+
+    const messaging = initFirebaseMessaging();
+
+    const token = await messaging.getToken({
+      vapidKey: FIREBASE_VAPID_KEY,
+      serviceWorkerRegistration: registration
+    });
+
+    await apiFetch("/notifications/token", {
+      method: "POST",
+      body: JSON.stringify({ token })
+    });
+
+    toast("Push notifications enabled ✓");
+    return true;
+  } catch (e) {
+    toast(e.message || "Could not enable push notifications", "error");
+    return false;
+  }
 }
 
 async function getPreviousCheckoutDetails() {
@@ -856,7 +913,7 @@ function HomePage() {
   };
 
   const enableNotifications = async () => {
-    const ok = await requestNotificationPermission(toast);
+    const ok = await registerFcmToken(toast);
     setNotificationsEnabled(ok);
   };
 
