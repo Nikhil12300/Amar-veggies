@@ -2,6 +2,12 @@
 __pycache__/
 *.pyc
 .env
+*.json
+firebase-adminsdk*.json
+*-firebase-adminsdk-*.json
+!manifest.json
+!package.json
+!package-lock.json
 *.db
 amar_veggies.db
 
