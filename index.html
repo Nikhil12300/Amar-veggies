@@ -429,7 +429,20 @@ function initFirebaseMessaging() {
 
 async function registerFcmToken(toast) {
   try {
+    alert("Step 1: Starting notification setup");
+
+    if (!("Notification" in window)) {
+      alert("Notifications not supported");
+      return false;
+    }
+
+    if (!("serviceWorker" in navigator)) {
+      alert("Service workers not supported");
+      return false;
+    }
+
     const permission = await Notification.requestPermission();
+    alert("Step 2: Permission = " + permission);
 
     if (permission !== "granted") {
       toast("Notifications were not enabled", "error");
@@ -437,24 +450,42 @@ async function registerFcmToken(toast) {
     }
 
     const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    alert("Step 3: Firebase service worker registered");
 
     const messaging = initFirebaseMessaging();
+
+    if (!messaging) {
+      alert("Firebase messaging failed to initialize");
+      return false;
+    }
+
+    alert("Step 4: Firebase messaging initialized");
 
     const token = await messaging.getToken({
       vapidKey: FIREBASE_VAPID_KEY,
       serviceWorkerRegistration: registration
     });
+
+    alert("FCM TOKEN: " + token);
     console.log("FCM TOKEN:", token);
-    alert(token);
+
+    if (!token) {
+      alert("Firebase returned empty token");
+      return false;
+    }
 
     await apiFetch("/notifications/token", {
       method: "POST",
       body: JSON.stringify({ token })
     });
 
+    alert("Step 5: Token saved to backend");
+
     toast("Push notifications enabled ✓");
     return true;
   } catch (e) {
+    alert("FCM ERROR: " + (e.message || e));
+    console.error("FCM ERROR:", e);
     toast(e.message || "Could not enable push notifications", "error");
     return false;
   }
