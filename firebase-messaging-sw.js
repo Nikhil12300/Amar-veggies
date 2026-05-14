@@ -13,7 +13,7 @@ firebase.initializeApp({
   apiKey: "AIzaSyD-NLbMzqg9lLQoSIslDMHsufyOtTE_gOs",
   authDomain: "amar-veggies-a3f2a.firebaseapp.com",
   projectId: "amar-veggies-a3f2a",
-  storageBucket: "amar-veggies-a3f2a.firebasestorage.app",
+  storageBucket: "amar-veggies-a3f2a.appspot.com",
   messagingSenderId: "522883626327",
   appId: "1:522883626327:web:c53a7ce54701ebbadafa12"
 });
@@ -21,14 +21,23 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  console.log("Background message:", payload);
+  console.log("Background message received:", payload);
 
-  const title = payload?.notification?.title || "Amar Veggies";
-  const options = {
-    body: payload?.notification?.body || "Order status updated",
+  const notificationTitle =
+    payload?.notification?.title || "Amar Veggies";
+
+  const notificationOptions = {
+    body:
+      payload?.notification?.body ||
+      "Your order status has been updated.",
     icon: "/icon-192.png",
-    badge: "/icon-192.png"
+    badge: "/icon-192.png",
+    tag: "amar-veggies-notification",
+    renotify: true
   };
 
-  self.registration.showNotification(title, options);
+  self.registration.showNotification(
+    notificationTitle,
+    notificationOptions
+  );
 });
