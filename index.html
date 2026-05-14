@@ -17,6 +17,8 @@
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
@@ -321,10 +323,11 @@ nav{width:100%;max-width:100vw;overflow:hidden}
 @media(max-width:850px){.auth-shell{padding:1rem;align-items:flex-start;background:var(--paper)}.auth-card{grid-template-columns:1fr;min-height:auto}.auth-brand{display:none}.auth-panel{padding:2rem 1.25rem}.auth-panel h1{text-align:left}.auth-panel-sub{text-align:left}.auth-row{align-items:flex-start}.auth-card{border-radius:20px}}
 
 
-/* ── GOOGLE MAPS LOCATION PICKER ── */
+/* ── LEAFLET LOCATION PICKER ── */
 .location-box{background:var(--paper);border:1.5px solid var(--border);border-radius:14px;padding:1rem;margin-top:.5rem}
 .location-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin:.75rem 0}
-.map-canvas{height:280px;width:100%;border-radius:14px;border:1.5px solid var(--border);overflow:hidden;background:linear-gradient(135deg,#e8f5ee,#d8f3dc);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.88rem;text-align:center;padding:1rem}
+.map-canvas{height:280px;width:100%;border-radius:14px;border:1.5px solid var(--border);overflow:hidden;background:linear-gradient(135deg,#e8f5ee,#d8f3dc);color:var(--muted);font-size:.88rem;text-align:center}
+.map-placeholder{height:100%;display:flex;align-items:center;justify-content:center;padding:1rem}
 .location-pill{display:inline-flex;align-items:center;gap:.35rem;background:#ecfdf5;border:1px solid #86efac;color:#15803d;border-radius:999px;padding:.35rem .7rem;font-size:.78rem;font-weight:700;margin-top:.65rem}
 .location-help{font-size:.78rem;color:var(--muted);line-height:1.45;margin-top:.55rem}
 
@@ -332,9 +335,6 @@ nav{width:100%;max-width:100vw;overflow:hidden}
 </head>
 <body>
 <div id="root"></div>
-<script>
-  window.GOOGLE_MAPS_API_KEY = "AIzaSyAYxwjmCFmzMVGsfStsvWPLInNDledNzEk";
-</script>
 <script type="text/babel">
 const {useState, useEffect, useContext, createContext, useCallback, useRef} = React;
 
@@ -342,9 +342,6 @@ const {useState, useEffect, useContext, createContext, useCallback, useRef} = Re
    CONFIG
 ═══════════════════════════════════════════════════════════ */
 const API = "https://amar-veggies.onrender.com/api";
-// Add your browser-restricted Google Maps JavaScript API key here before production.
-// Enable: Maps JavaScript API, Places API, and Geocoding API in Google Cloud.
-const GOOGLE_MAPS_API_KEY = window.GOOGLE_MAPS_API_KEY;
 /* ═══════════════════════════════════════════════════════════
    API HELPERS
 ═══════════════════════════════════════════════════════════ */
@@ -1183,26 +1180,23 @@ function CartPage() {
 
 
 /* ═══════════════════════════════════════════════════════════
-   GOOGLE MAPS LOCATION PICKER
+   LEAFLET LOCATION PICKER
 ═══════════════════════════════════════════════════════════ */
-let googleMapsPromise = null;
-function loadGoogleMaps() {
-  if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "YOUR_GOOGLE_MAPS_API_KEY") {
-    return Promise.reject(new Error("Add your Google Maps API key in index.html"));
-  }
-  if (window.google?.maps) return Promise.resolve(window.google.maps);
-  if (googleMapsPromise) return googleMapsPromise;
-  googleMapsPromise = new Promise((resolve, reject) => {
-    const cb = "initAmarVeggiesGoogleMaps";
-    window[cb] = () => resolve(window.google.maps);
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&libraries=places&callback=${cb}`;
-    script.async = true;
-    script.defer = true;
-    script.onerror = () => reject(new Error("Google Maps failed to load"));
-    document.head.appendChild(script);
-  });
-  return googleMapsPromise;
+async function reverseGeocode(lat, lng, fallback = "") {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`;
+  const res = await fetch(url, {headers: {"Accept": "application/json"}});
+  if (!res.ok) throw new Error("Could not find address for this pin");
+  const data = await res.json();
+  return data.display_name || fallback;
+}
+
+async function searchAddress(query) {
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, {headers: {"Accept": "application/json"}});
+  if (!res.ok) throw new Error("Address search failed");
+  const results = await res.json();
+  if (!results?.length) throw new Error("No matching location found");
+  return results[0];
 }
 
 function LocationPicker({value, onChange}) {
@@ -1211,63 +1205,66 @@ function LocationPicker({value, onChange}) {
   const inputRef = useRef(null);
   const mapObj = useRef(null);
   const markerObj = useRef(null);
-  const geocoderObj = useRef(null);
-  const [mapsReady, setMapsReady] = useState(false);
-  const [mapsErr, setMapsErr] = useState("");
+  const [mapReady, setMapReady] = useState(false);
+  const [mapErr, setMapErr] = useState("");
   const defaultCenter = {lat: 23.0225, lng: 72.5714}; // Ahmedabad fallback for local testing
 
   const setPickedLocation = (lat, lng, address = value.address || "", placeId = "") => {
     onChange({lat, lng, address, placeId});
   };
 
+  const movePin = (lat, lng) => {
+    if (!mapObj.current || !markerObj.current) return;
+    const pos = [Number(lat), Number(lng)];
+    markerObj.current.setLatLng(pos);
+    mapObj.current.setView(pos, 16);
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    loadGoogleMaps().then((maps) => {
-      if (cancelled || !mapRef.current) return;
-      const center = value.lat && value.lng ? {lat: Number(value.lat), lng: Number(value.lng)} : defaultCenter;
-      mapObj.current = new maps.Map(mapRef.current, {center, zoom: 16, mapTypeControl:false, streetViewControl:false, fullscreenControl:false});
-      markerObj.current = new maps.Marker({map: mapObj.current, position: center, draggable: true});
-      geocoderObj.current = new maps.Geocoder();
-      const autocomplete = new maps.places.Autocomplete(inputRef.current, {componentRestrictions:{country:"in"}, fields:["formatted_address","geometry","place_id","name"]});
-      autocomplete.addListener("place_changed", () => {
-        const place = autocomplete.getPlace();
-        if (!place.geometry?.location) return;
-        const lat = place.geometry.location.lat();
-        const lng = place.geometry.location.lng();
-        const address = place.formatted_address || place.name || inputRef.current.value;
-        mapObj.current.setCenter({lat,lng});
-        markerObj.current.setPosition({lat,lng});
-        setPickedLocation(lat, lng, address, place.place_id || "");
-      });
-      mapObj.current.addListener("click", (e) => {
-        const lat = e.latLng.lat();
-        const lng = e.latLng.lng();
-        markerObj.current.setPosition({lat,lng});
-        geocoderObj.current.geocode({location:{lat,lng}}, (results, status) => {
-          const address = status === "OK" && results?.[0] ? results[0].formatted_address : value.address;
-          setPickedLocation(lat, lng, address, results?.[0]?.place_id || "");
-        });
-      });
-      markerObj.current.addListener("dragend", (e) => {
-        const lat = e.latLng.lat();
-        const lng = e.latLng.lng();
-        geocoderObj.current.geocode({location:{lat,lng}}, (results, status) => {
-          const address = status === "OK" && results?.[0] ? results[0].formatted_address : value.address;
-          setPickedLocation(lat, lng, address, results?.[0]?.place_id || "");
-        });
-      });
-      setMapsReady(true);
-    }).catch((e) => setMapsErr(e.message));
-    return () => { cancelled = true; };
+    if (!mapRef.current) return;
+    if (!window.L) {
+      setMapErr("Leaflet failed to load");
+      return;
+    }
+    const center = value.lat && value.lng ? [Number(value.lat), Number(value.lng)] : [defaultCenter.lat, defaultCenter.lng];
+    const map = L.map(mapRef.current, {scrollWheelZoom:false}).setView(center, value.lat && value.lng ? 16 : 12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+    const marker = L.marker(center, {draggable:true}).addTo(map);
+
+    const pickFromLatLng = async (lat, lng) => {
+      marker.setLatLng([lat, lng]);
+      try {
+        const address = await reverseGeocode(lat, lng, value.address);
+        setPickedLocation(lat, lng, address, "");
+      } catch {
+        setPickedLocation(lat, lng, value.address, "");
+      }
+    };
+
+    map.on("click", (e) => pickFromLatLng(e.latlng.lat, e.latlng.lng));
+    marker.on("dragend", (e) => {
+      const pos = e.target.getLatLng();
+      pickFromLatLng(pos.lat, pos.lng);
+    });
+    mapObj.current = map;
+    markerObj.current = marker;
+    setMapReady(true);
+    setTimeout(() => map.invalidateSize(), 0);
+    return () => {
+      map.remove();
+      mapObj.current = null;
+      markerObj.current = null;
+    };
   }, []);
 
   useEffect(() => {
-    if (mapsReady && value.lat && value.lng && mapObj.current && markerObj.current) {
-      const pos = {lat: Number(value.lat), lng: Number(value.lng)};
-      mapObj.current.setCenter(pos);
-      markerObj.current.setPosition(pos);
+    if (mapReady && value.lat && value.lng) {
+      movePin(value.lat, value.lng);
     }
-  }, [value.lat, value.lng, mapsReady]);
+  }, [value.lat, value.lng, mapReady]);
   useEffect(() => {
     if (inputRef.current && value.address && inputRef.current.value !== value.address) {
       inputRef.current.value = value.address;
@@ -1275,19 +1272,30 @@ function LocationPicker({value, onChange}) {
   }, [value.address]);
 
 
+  const findAddress = async () => {
+    const query = inputRef.current?.value?.trim();
+    if (!query) return;
+    try {
+      const result = await searchAddress(query);
+      const lat = Number(result.lat);
+      const lng = Number(result.lon);
+      movePin(lat, lng);
+      setPickedLocation(lat, lng, result.display_name || query, "");
+      toast("Location found ✓");
+    } catch (e) {
+      toast(e.message || "Could not find that address", "error");
+    }
+  };
+
   const useCurrentLocation = () => {
     if (!navigator.geolocation) { toast("Location is not supported on this device", "error"); return; }
-    navigator.geolocation.getCurrentPosition((pos) => {
+    navigator.geolocation.getCurrentPosition(async (pos) => {
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
-      if (geocoderObj.current) {
-        geocoderObj.current.geocode({location:{lat,lng}}, (results, status) => {
-          const address = status === "OK" && results?.[0] ? results[0].formatted_address : value.address;
-          setPickedLocation(lat, lng, address, results?.[0]?.place_id || "");
-        });
-      } else {
-        setPickedLocation(lat, lng, value.address, "");
-      }
+      movePin(lat, lng);
+      let address = value.address;
+      try { address = await reverseGeocode(lat, lng, value.address); } catch {}
+      setPickedLocation(lat, lng, address, "");
       toast("Location pinned ✓");
     }, () => toast("Could not access location. Allow location permission or search manually.", "error"), {enableHighAccuracy:true, timeout:10000});
   };
@@ -1296,14 +1304,15 @@ function LocationPicker({value, onChange}) {
     <div className="location-box">
       <div className="field" style={{marginBottom:0}}>
         <label>Pin your delivery location</label>
-        <input ref={inputRef} placeholder="Search your building, society, landmark or area" defaultValue={value.address || ""}/>
+        <input ref={inputRef} placeholder="Search your building, society, landmark or area" defaultValue={value.address || ""} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); findAddress(); } }}/>
       </div>
       <div className="location-actions">
         <button className="btn btn-primary" type="button" onClick={useCurrentLocation}>📍 Use my current location</button>
+        <button className="btn btn-ghost" type="button" onClick={findAddress}>Find on map</button>
         {value.lat && value.lng && <a className="btn btn-ghost" target="_blank" href={`https://www.google.com/maps/search/?api=1&query=${value.lat},${value.lng}`}>Open pin</a>}
       </div>
       <div ref={mapRef} className="map-canvas">
-        {mapsErr ? `${mapsErr}. You can still type the address manually.` : "Loading map…"}
+        {mapErr && <div className="map-placeholder">{mapErr}. You can still type the address manually.</div>}
       </div>
       {value.lat && value.lng && <div className="location-pill">✓ Exact location saved</div>}
       <div className="location-help">Tip: search your address, then drag the marker exactly to your gate/building entrance for smoother delivery.</div>
