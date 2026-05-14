@@ -461,7 +461,9 @@ async function registerFcmToken(toast) {
       return false;
     }
 
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
+      updateViaCache: "none"
+    });
     alert("Step 3: Firebase service worker registered");
 
     const messaging = initFirebaseMessaging();
