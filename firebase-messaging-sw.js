@@ -1,5 +1,5 @@
-importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
+importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js");
 
 firebase.initializeApp({
   apiKey: "AIzaSyD-NLbMzqg9lLQoSIslDMHsufyOtTE_gOs",
@@ -7,15 +7,29 @@ firebase.initializeApp({
   projectId: "amar-veggies-a3f2a",
   storageBucket: "amar-veggies-a3f2a.firebasestorage.app",
   messagingSenderId: "522883626327",
-  appId: "1:522883626327:web:c53a7ce54701ebbadafa12",
-  measurementId: "G-NZQ83J6LDF"
+  appId: "1:522883626327:web:c53a7ce54701ebbadafa12"
 });
 
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  self.registration.showNotification(payload.notification.title, {
-    body: payload.notification.body,
-    icon: '/icon-192.png'
-  });
+  self.registration.showNotification(
+    payload.notification?.title || "Amar Veggies",
+    {
+      body: payload.notification?.body || "Your order status was updated.",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: {
+        url: "/"
+      }
+    }
+  );
+});
+
+self.addEventListener("notificationclick", function (event) {
+  event.notification.close();
+
+  event.waitUntil(
+    clients.openWindow(event.notification.data?.url || "/")
+  );
 });
