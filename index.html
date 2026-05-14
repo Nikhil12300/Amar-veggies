@@ -412,11 +412,6 @@ const firebaseConfig = {
 const FIREBASE_VAPID_KEY = "BPRudrr_7UaHMUwDjlDYsNudvsffYvOYzVDQsjF9uFKzffFq8EUa2_Cj-z-_l8n8b6xkVus0ZYgwWbrRFVOun30";
 
 let firebaseMessaging = null;
-let foregroundMessageUnsubscribe = null;
-
-function onMessage(messaging, callback) {
-  return messaging.onMessage(callback);
-}
 
 function initFirebaseMessaging() {
   if (!("firebase" in window)) return null;
@@ -426,10 +421,6 @@ function initFirebaseMessaging() {
   }
 
   firebaseMessaging = firebase.messaging();
-
-  // onMessage(messaging, (payload) => {
-  //   console.log("Foreground notification received:", payload);
-  // });
 
   return firebaseMessaging;
 }
@@ -450,8 +441,8 @@ async function registerFcmToken(toast) {
       return false;
     }
 
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
-      updateViaCache: "none"
+    const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+      updateViaCache: 'none'
     });
     const messaging = initFirebaseMessaging();
 
@@ -2690,11 +2681,6 @@ function AppInner() {
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
-</script>
-<script>
-// Do not register /service-worker.js here.
-// Firebase Cloud Messaging uses /firebase-messaging-sw.js.
-// Registering another root-scope service worker can replace/interfere with the FCM worker.
 </script>
 </body>
 </html>
