@@ -13,23 +13,14 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  self.registration.showNotification(
-    payload.notification?.title || "Amar Veggies",
-    {
-      body: payload.notification?.body || "Your order status was updated.",
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      data: {
-        url: "/"
-      }
-    }
-  );
-});
+  console.log("Background message:", payload);
 
-self.addEventListener("notificationclick", function (event) {
-  event.notification.close();
+  const title = payload?.notification?.title || "Amar Veggies";
+  const options = {
+    body: payload?.notification?.body || "Order status updated",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png"
+  };
 
-  event.waitUntil(
-    clients.openWindow(event.notification.data?.url || "/")
-  );
+  self.registration.showNotification(title, options);
 });

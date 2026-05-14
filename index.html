@@ -432,20 +432,9 @@ function initFirebaseMessaging() {
 
   firebaseMessaging = firebase.messaging();
 
-  if (!foregroundMessageUnsubscribe) {
-    const messaging = firebaseMessaging;
-
-    foregroundMessageUnsubscribe = onMessage(messaging, (payload) => {
-      console.log("Foreground notification received:", payload);
-
-      if (Notification.permission === "granted") {
-        new Notification(payload.notification?.title || "Amar Veggies", {
-          body: payload.notification?.body || "Your order status was updated.",
-          icon: "/icon-192.png"
-        });
-      }
-    });
-  }
+  // onMessage(messaging, (payload) => {
+  //   console.log("Foreground notification received:", payload);
+  // });
 
   return firebaseMessaging;
 }
