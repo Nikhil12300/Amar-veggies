@@ -1538,16 +1538,33 @@ def assign_delivery_partner(
 def admin_stats(db: Session = Depends(get_db)):
     total_orders = db.query(Order).count()
     pending_orders = db.query(Order).filter(Order.status == "pending").count()
+    confirmed_orders = db.query(Order).filter(Order.status.in_(["confirmed", "packed"])).count()
+    active_delivery_orders = db.query(Order).filter(Order.status == "out_for_delivery").count()
+    delivered_orders = db.query(Order).filter(Order.status == "delivered").count()
+    cancelled_orders = db.query(Order).filter(Order.status == "cancelled").count()
     total_products = db.query(Product).count()
     avail_products = db.query(Product).filter(Product.available == 1).count()
     total_users = db.query(User).filter(User.is_admin == 0).count()
-    revenue = sum([o.total or 0 for o in db.query(Order).filter(Order.status != "cancelled").all()])
+
+    non_cancelled_orders = db.query(Order).filter(Order.status != "cancelled").all()
+    revenue = sum([o.total or 0 for o in non_cancelled_orders])
+
+    today_prefix = datetime.utcnow().date().isoformat()
+    today_orders_rows = [o for o in non_cancelled_orders if str(o.created_at or "").startswith(today_prefix)]
+    today_revenue = sum([o.total or 0 for o in today_orders_rows])
+
     return {
         "total_orders": total_orders,
         "pending_orders": pending_orders,
+        "confirmed_orders": confirmed_orders,
+        "active_delivery_orders": active_delivery_orders,
+        "delivered_orders": delivered_orders,
+        "cancelled_orders": cancelled_orders,
         "total_products": total_products,
         "available_products": avail_products,
         "revenue": round(revenue or 0, 2),
+        "today_revenue": round(today_revenue or 0, 2),
+        "today_orders": len(today_orders_rows),
         "total_users": total_users,
     }
 
