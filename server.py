@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Set
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -190,7 +190,7 @@ def init_db():
         ]
 
         inspector = inspect(conn)
-        columns_by_table: Dict[str, set[str]] = {}
+        columns_by_table: Dict[str, Set[str]] = {}
         for table_name, column_name, migration in migrations:
             if table_name not in columns_by_table:
                 columns_by_table[table_name] = {
@@ -1501,8 +1501,10 @@ def repeat_last_order(user: Dict[str, Any] = Depends(get_current_user), db: Sess
     available_items = []
     for item in order_dict.get("items", []):
         product = db.query(Product).filter(Product.id == item.get("product_id")).first()
+        if product is None:
+            continue
         product_dict = model_to_dict(product)
-        if not product_dict or not product_dict.get("available"):
+        if product_dict is None or not product_dict.get("available"):
             continue
         selected_weight = int(item.get("selected_weight") or 1000)
         quantity = int(item.get("quantity") or 1)
