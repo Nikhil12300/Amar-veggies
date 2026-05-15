@@ -124,6 +124,17 @@ class Product(Base):
     image_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
+class StockHistory(Base):
+    __tablename__ = "stock_history"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    product_id: Mapped[str] = mapped_column(String, nullable=False)
+    product_name: Mapped[str] = mapped_column(String, nullable=False)
+    change_kg: Mapped[float] = mapped_column(Float, nullable=False)
+    stock_after: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    order_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
 class Order(Base):
     __tablename__ = "orders"
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -487,6 +498,24 @@ def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
 def models_to_list(rows: List[Any]) -> List[Dict[str, Any]]:
     return [d for d in (model_to_dict(r) for r in rows) if d is not None]
 
+def record_stock_history(
+    db: Session,
+    product: Product,
+    change_kg: float,
+    reason: str,
+    order_id: Optional[str] = None,
+):
+    db.add(StockHistory(
+        id=str(uuid.uuid4()),
+        product_id=product.id,
+        product_name=product.name,
+        change_kg=round(float(change_kg), 3),
+        stock_after=round(float(product.stock or 0), 3),
+        reason=reason,
+        order_id=order_id,
+        created_at=now_iso(),
+    ))
+
 def public_user(user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     user = user or {}
     data: Dict[str, Any] = {
@@ -666,6 +695,10 @@ class ProductIn(BaseModel):
     available: Optional[bool] = True
     featured: Optional[bool] = False
     quantity_options: Optional[List[int]] = [100, 250, 500, 1000]
+
+class RestockIn(BaseModel):
+    amount: float
+    reason: Optional[str] = "Manual restock"
 
 class CartItemIn(BaseModel):
     product_id: str
@@ -1227,6 +1260,45 @@ def delete_product(pid: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True}
 
+@app.post("/api/products/{pid}/restock", dependencies=[Depends(require_admin)])
+def restock_product(pid: str, body: RestockIn, db: Session = Depends(get_db)):
+    if body.amount <= 0:
+        raise HTTPException(400, "Restock amount must be greater than 0")
+
+    product = db.query(Product).filter(Product.id == pid).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    product.stock = round(float(product.stock or 0) + float(body.amount), 3)
+    if product.stock > 0:
+        product.available = 1
+
+    record_stock_history(db, product, body.amount, body.reason or "Manual restock")
+
+    db.commit()
+    db.refresh(product)
+    return model_to_dict(product)
+
+@app.get("/api/admin/low-stock", dependencies=[Depends(require_admin)])
+def low_stock_products(limit: float = 2, db: Session = Depends(get_db)):
+    rows = (
+        db.query(Product)
+        .filter(Product.stock <= limit)
+        .order_by(Product.stock.asc(), Product.name.asc())
+        .all()
+    )
+    return models_to_list(rows)
+
+@app.get("/api/admin/stock-history", dependencies=[Depends(require_admin)])
+def stock_history(limit: int = 50, db: Session = Depends(get_db)):
+    rows = (
+        db.query(StockHistory)
+        .order_by(StockHistory.created_at.desc())
+        .limit(min(max(limit, 1), 200))
+        .all()
+    )
+    return models_to_list(rows)
+
 @app.post("/api/create-payment-order")
 def create_payment_order(
     body: CreatePaymentOrderIn,
@@ -1295,6 +1367,7 @@ ORDER_STATUSES = ["pending", "confirmed", "out_for_delivery", "delivered", "canc
 def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
     items_detail = []
     subtotal = 0
+    stock_changes = []
     for ci in body.items:
         product = db.query(Product).filter(Product.id == ci.product_id).first()
         if product is None:
@@ -1337,6 +1410,7 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
         if product.stock <= 0:
             product.stock = 0
             product.available = 0
+        stock_changes.append((product, -stock_needed))
 
     delivery = 0 if subtotal >= 300 else 40
     timeline = [{"status": "pending", "at": now_iso()}]
@@ -1364,6 +1438,8 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
         created_at=now_iso(),
     )
     db.add(order)
+    for product, change_kg in stock_changes:
+        record_stock_history(db, product, change_kg, "Order placed", order.id)
     db.commit()
     db.refresh(order)
     try:
@@ -1545,6 +1621,8 @@ def admin_stats(db: Session = Depends(get_db)):
     total_products = db.query(Product).count()
     avail_products = db.query(Product).filter(Product.available == 1).count()
     total_users = db.query(User).filter(User.is_admin == 0).count()
+    low_stock_products = db.query(Product).filter(Product.stock > 0, Product.stock <= 2).count()
+    out_of_stock_products = db.query(Product).filter(Product.stock <= 0).count()
 
     non_cancelled_orders = db.query(Order).filter(Order.status != "cancelled").all()
     revenue = sum([o.total or 0 for o in non_cancelled_orders])
@@ -1566,6 +1644,8 @@ def admin_stats(db: Session = Depends(get_db)):
         "today_revenue": round(today_revenue or 0, 2),
         "today_orders": len(today_orders_rows),
         "total_users": total_users,
+        "low_stock_products": low_stock_products,
+        "out_of_stock_products": out_of_stock_products,
     }
 
 # ── Health ────────────────────────────────────────────────────────
