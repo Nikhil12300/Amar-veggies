@@ -1416,10 +1416,16 @@ def get_order_tracking(
     if not user.get("is_admin") and order_dict.get("user_id") != user.get("id"):
         raise HTTPException(403, "Access denied")
 
+    partner_phone = None
+    if order.delivery_partner:
+        partner = db.query(DeliveryPartner).filter(DeliveryPartner.name == order.delivery_partner).first()
+        partner_phone = partner.phone if partner else None
+
     return {
         "order_id": order.id,
         "status": order.status,
         "delivery_partner": order.delivery_partner,
+        "delivery_partner_phone": partner_phone,
         "delivery_live_lat": order.delivery_live_lat,
         "delivery_live_lng": order.delivery_live_lng,
         "delivery_last_updated": order.delivery_last_updated,
@@ -1512,7 +1518,15 @@ def assign_delivery_partner(
     if not partner:
         raise HTTPException(400, "Delivery partner is required")
 
-    order.delivery_partner = partner
+    delivery_partner = db.query(DeliveryPartner).filter(
+        DeliveryPartner.name == partner,
+        DeliveryPartner.active == 1
+    ).first()
+
+    if not delivery_partner:
+        raise HTTPException(404, "Delivery partner not found or inactive")
+
+    order.delivery_partner = delivery_partner.name
 
     db.commit()
     db.refresh(order)

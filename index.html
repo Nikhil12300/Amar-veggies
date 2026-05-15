@@ -1713,33 +1713,47 @@ function OrdersPage() {
             <p className="text-sm text-muted mt-2">📍 {selected.address} · 📞 {selected.phone}</p>
             {selected.delivery_maps_url && <p className="text-sm mt-1"><a href={selected.delivery_maps_url} target="_blank" style={{color:"var(--leaf)",fontWeight:700}}>Open pinned location</a></p>}
             <p className="text-sm text-muted">🕒 Slot: {selected.slot}</p>
-            {tracking?.delivery_live_lat && tracking?.delivery_live_lng && (
+            {tracking?.delivery_partner && (
               <div style={{
                 background: "var(--cream)",
                 borderRadius: 12,
                 padding: "1rem",
                 marginTop: "1rem"
               }}>
-                <div className="fw-700 mb-1">🚚 Live Delivery Tracking</div>
+                <div className="fw-700 mb-1">🚚 Delivery Tracking</div>
 
                 <p className="text-sm text-muted mb-1">
-                  Partner: {tracking.delivery_partner || "Assigned partner"}
+                  Partner: {tracking.delivery_partner}
                 </p>
 
-                <p className="text-xs text-muted mb-2">
-                  Last updated: {tracking.delivery_last_updated
-                    ? new Date(tracking.delivery_last_updated).toLocaleTimeString("en-IN")
-                    : "Just now"}
-                </p>
+                {tracking.delivery_live_lat && tracking.delivery_live_lng ? (
+                  <>
+                    <p className="text-xs text-muted mb-2">
+                      Last updated: {tracking.delivery_last_updated
+                        ? new Date(tracking.delivery_last_updated).toLocaleTimeString("en-IN")
+                        : "Just now"}
+                    </p>
 
-                <iframe
-                  width="100%"
-                  height="260"
-                  style={{border:0, borderRadius:12, marginTop:".75rem"}}
-                  loading="lazy"
-                  allowFullScreen
-                  src={`https://www.google.com/maps?q=${tracking.delivery_live_lat},${tracking.delivery_live_lng}&z=16&output=embed`}
-                ></iframe>
+                    <iframe
+                      width="100%"
+                      height="260"
+                      style={{border:0, borderRadius:12, marginTop:".75rem"}}
+                      loading="lazy"
+                      allowFullScreen
+                      src={`https://www.google.com/maps?q=${tracking.delivery_live_lat},${tracking.delivery_live_lng}&z=16&output=embed`}
+                    ></iframe>
+
+                    <div className="flex gap-1 flex-wrap mt-2">
+                      <a className="btn btn-primary" target="_blank" href={`https://www.google.com/maps/search/?api=1&query=${tracking.delivery_live_lat},${tracking.delivery_live_lng}`}>
+                        Open live location
+                      </a>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted">
+                    Live location will appear here once your delivery partner starts sharing it.
+                  </p>
+                )}
               </div>
             )}
             <div className="modal-footer"><button className="btn btn-ghost" onClick={() => setSelected(null)}>Close</button></div>
@@ -2138,6 +2152,7 @@ function DeliveryPartnerPage() {
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [trackingOrderId, setTrackingOrderId] = useState(null);
+  const [lastLocationUpdate, setLastLocationUpdate] = useState(null);
   const watchIdRef = useRef(null);
 
   const loginDelivery = async () => {
@@ -2173,6 +2188,7 @@ function DeliveryPartnerPage() {
     localStorage.removeItem("delivery_partner");
     setPartner(null);
     setTrackingOrderId(null);
+    setLastLocationUpdate(null);
     setOrders([]);
   };
 
@@ -2228,7 +2244,7 @@ function DeliveryPartnerPage() {
     watchIdRef.current = navigator.geolocation.watchPosition(
       async (pos) => {
         try {
-          await deliveryApiFetch("/delivery/location", {
+          const result = await deliveryApiFetch("/delivery/location", {
             method: "POST",
             body: JSON.stringify({
               order_id: orderId,
@@ -2236,6 +2252,7 @@ function DeliveryPartnerPage() {
               lng: pos.coords.longitude
             })
           });
+          setLastLocationUpdate(result.updated_at || new Date().toISOString());
         } catch (e) {
           toast(e.message, "error");
         }
@@ -2260,6 +2277,7 @@ function DeliveryPartnerPage() {
     }
 
     setTrackingOrderId(null);
+    setLastLocationUpdate(null);
     toast("Live tracking stopped");
   };
 
@@ -2336,9 +2354,37 @@ function DeliveryPartnerPage() {
           </div>
 
           <p className="text-sm mb-1">📍 {o.address}</p>
-          <p className="text-sm mb-2">📞 {o.phone} · 🕒 {o.slot}</p>
+          <p className="text-sm mb-1">📞 {o.phone} · 🕒 {o.slot}</p>
+
+          {o.notes && (
+            <div style={{background:"var(--cream)",borderRadius:10,padding:".6rem .75rem",fontSize:".8rem",marginBottom:".75rem"}}>
+              📝 {o.notes}
+            </div>
+          )}
+
+          <div className="flex gap-1 flex-wrap mb-2">
+            {o.items?.slice(0,5).map(i => (
+              <span key={i.product_id} className="chip">
+                {i.emoji} {i.name} × {i.quantity} {i.selected_weight ? (i.selected_weight === 1000 ? "1kg" : `${i.selected_weight}g`) : i.unit}
+              </span>
+            ))}
+            {o.items?.length > 5 && <span className="chip">+{o.items.length - 5} more</span>}
+          </div>
+
+          {trackingOrderId === o.id && (
+            <div style={{background:"#ecfdf5",border:"1px solid #86efac",borderRadius:12,padding:".7rem .85rem",marginBottom:".75rem",fontSize:".82rem",color:"#15803d"}}>
+              📡 Live location sharing is ON
+              {lastLocationUpdate && <div className="text-xs" style={{marginTop:".2rem"}}>Last sent: {new Date(lastLocationUpdate).toLocaleTimeString("en-IN")}</div>}
+            </div>
+          )}
 
           <div className="flex gap-1 flex-wrap">
+            {o.phone && (
+              <a className="btn btn-ghost" href={`tel:${o.phone}`}>
+                Call Customer
+              </a>
+            )}
+
             {o.delivery_maps_url && (
               <a className="btn btn-ghost" target="_blank" href={o.delivery_maps_url}>
                 Open Pin
@@ -2357,7 +2403,7 @@ function DeliveryPartnerPage() {
 
             {o.status === "confirmed" && (
               <button className="btn btn-primary" onClick={() => updateStatus(o.id, "out_for_delivery")}>
-                Picked Up
+                Start Delivery
               </button>
             )}
 
@@ -2693,14 +2739,6 @@ function AppInner() {
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js")
-      .then(() => console.log("App service worker registered"))
-      .catch(err => console.error("App service worker failed:", err));
-  });
-}
 </script>
 </body>
 </html>
