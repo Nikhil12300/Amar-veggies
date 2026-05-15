@@ -30,8 +30,8 @@ messaging.onBackgroundMessage((payload) => {
     body:
       payload?.notification?.body ||
       "Your order status has been updated.",
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
     tag: "amar-veggies-notification",
     renotify: true
   };

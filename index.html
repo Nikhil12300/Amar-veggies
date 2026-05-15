@@ -1720,7 +1720,7 @@ function OrdersPage() {
                 padding: "1rem",
                 marginTop: "1rem"
               }}>
-                <div className="fw-700 mb-1">ðŸšš Live Delivery Tracking</div>
+                <div className="fw-700 mb-1">🚚 Live Delivery Tracking</div>
 
                 <p className="text-sm text-muted mb-1">
                   Partner: {tracking.delivery_partner || "Assigned partner"}
@@ -2250,7 +2250,7 @@ function DeliveryPartnerPage() {
       }
     );
 
-    toast("Live tracking started âœ“");
+    toast("Live tracking started ✓");
   };
 
   const stopLiveTracking = () => {
@@ -2693,6 +2693,14 @@ function AppInner() {
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js")
+      .then(() => console.log("App service worker registered"))
+      .catch(err => console.error("App service worker failed:", err));
+  });
+}
 </script>
 </body>
 </html>
