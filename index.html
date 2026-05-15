@@ -496,6 +496,31 @@ async function getPreviousCheckoutDetails() {
   };
 }
 
+
+function getLocalFavoriteIds() {
+  try {
+    return JSON.parse(localStorage.getItem("amarveggies_favorites") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function setLocalFavoriteIds(ids) {
+  localStorage.setItem("amarveggies_favorites", JSON.stringify([...new Set(ids)]));
+}
+
+async function syncFavoritesFromServer() {
+  const token = localStorage.getItem("hv_token");
+  if (!token) return getLocalFavoriteIds();
+  try {
+    const data = await apiFetch("/favorites");
+    setLocalFavoriteIds(data.product_ids || []);
+    return data.product_ids || [];
+  } catch {
+    return getLocalFavoriteIds();
+  }
+}
+
 function loadRazorpayScript() {
   return new Promise((resolve) => {
     if (window.Razorpay) {
@@ -670,6 +695,25 @@ function CartProvider({children}) {
     });
   };
 
+  const addMany = (newItems = []) => {
+    setCart(prev => {
+      const next = {...prev};
+      newItems.forEach(item => {
+        const id = item.product_id || item.id;
+        const weight = Number(item.selected_weight || item.weight || 1000);
+        const quantity = Number(item.quantity || 1);
+        if (!id || quantity <= 0) return;
+        const key = `${id}_${weight}`;
+        next[key] = {
+          id,
+          weight,
+          quantity: (next[key]?.quantity || 0) + quantity
+        };
+      });
+      return next;
+    });
+  };
+
   const clear = () => {
     setCart({});
     localStorage.removeItem("amarveggies_cart");
@@ -702,6 +746,7 @@ function CartProvider({children}) {
       cart,
       set,
       add,
+      addMany,
       remove,
       clear,
       count,
@@ -758,7 +803,78 @@ function QtyControl({qty, onInc, onDec}) {
   );
 }
 
+
+function RepeatLastOrderButton({compact = false}) {
+  const {user} = useContext(AuthCtx);
+  const {addMany} = useContext(CartCtx);
+  const {nav} = useContext(RouterCtx);
+  const toast = useContext(ToastCtx);
+  const [loading, setLoading] = useState(false);
+
+  if (!user) return null;
+
+  const repeatLastOrder = async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch("/orders/repeat-last");
+      const items = data.items || [];
+      if (!items.length) {
+        toast(data.message || "No available items from your last order", "error");
+        return;
+      }
+      addMany(items);
+      toast(data.skipped_count ? `Added available items. ${data.skipped_count} unavailable item skipped.` : "Last order added to cart ✓");
+      nav("cart");
+    } catch (e) {
+      toast(e.message || "Could not repeat last order", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button className={compact ? "btn btn-ghost" : "btn-hero btn-hero-outline"} onClick={repeatLastOrder} disabled={loading}>
+      {loading ? "Adding…" : "🔁 Repeat Last Order"}
+    </button>
+  );
+}
+
+function BuyAgainSection() {
+  const {user} = useContext(AuthCtx);
+  const {nav} = useContext(RouterCtx);
+  const {setProducts} = useContext(CartCtx);
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    if (!user) return;
+    apiFetch("/orders/buy-again").then(d => {
+      setItems(Array.isArray(d) ? d : []);
+      setProducts(prev => {
+        const m = {};
+        prev.forEach(x => m[x.id] = x);
+        (Array.isArray(d) ? d : []).forEach(x => m[x.id] = x);
+        return Object.values(m);
+      });
+    }).catch(() => {});
+  }, [user]);
+
+  if (!user || items.length === 0) return null;
+
+  return (
+    <div style={{marginTop:"3rem"}}>
+      <div className="section-hd">
+        <h2 className="section-title">Buy Again 🔁</h2>
+        <RepeatLastOrderButton compact />
+      </div>
+      <div className="grid">
+        {items.map(p => <ProductCard key={p.id} product={p} onDetail={pr => nav("product", {product: pr})} />)}
+      </div>
+    </div>
+  );
+}
+
 function ProductCard({product, onDetail}) {
+  const {user} = useContext(AuthCtx);
   const {cart, add, set} = useContext(CartCtx);
   const toast = useContext(ToastCtx);
   const [weight, setWeight] = useState(product.quantity_options?.includes(1000) ? 1000 : product.quantity_options?.[0] || 1000);
@@ -766,9 +882,30 @@ function ProductCard({product, onDetail}) {
   const qty = cart[cartKey]?.quantity || 0;
   const displayWeight = Number(weight) || 1000;
   const displayPrice = (product.price * (displayWeight / 1000)).toFixed(2);
+  const [favorite, setFavorite] = useState(() => getLocalFavoriteIds().includes(product.id));
+
+  const toggleFavorite = async (e) => {
+    e.stopPropagation();
+    if (!user) {
+      toast("Sign in to save favorites", "error");
+      return;
+    }
+    const nextFavorite = !favorite;
+    setFavorite(nextFavorite);
+    const ids = getLocalFavoriteIds();
+    setLocalFavoriteIds(nextFavorite ? [...ids, product.id] : ids.filter(id => id !== product.id));
+    try {
+      await apiFetch(`/favorites/${product.id}`, {method: nextFavorite ? "POST" : "DELETE"});
+      toast(nextFavorite ? "Saved to favorites ♥" : "Removed from favorites");
+    } catch (err) {
+      setFavorite(!nextFavorite);
+      toast(err.message || "Could not update favorite", "error");
+    }
+  };
   return (
     <div className={`card ${!product.available?"unavail":""}`}>
       <div className="card-thumb" onClick={() => product.available && onDetail && onDetail(product)}>
+        <button onClick={toggleFavorite} title={favorite ? "Remove from favorites" : "Save favorite"} style={{position:"absolute",top:8,right:8,zIndex:2,width:34,height:34,borderRadius:"50%",border:"1px solid rgba(255,255,255,.7)",background:"rgba(255,255,255,.92)",boxShadow:"0 2px 10px rgba(0,0,0,.12)",cursor:"pointer",fontSize:"1rem"}}>{favorite ? "♥" : "♡"}</button>
         {product.image_data
           ? <img src={product.image_data} alt={product.name}/>
           : <span style={{fontSize:"3rem"}}>{product.emoji || "🌿"}</span>}
@@ -956,6 +1093,7 @@ function HomePage() {
           <p className="hero-sub">Handpicked seasonal fruits and vegetables delivered with care. No middlemen, just pure freshness.</p>
           <div className="hero-actions">
             <button className="btn-hero btn-hero-primary" onClick={() => nav("shop")}>Shop Now →</button>
+            <RepeatLastOrderButton />
             {installPrompt && !isInstalled && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && (
               <button className="btn-hero btn-hero-outline" onClick={installApp}>
                 📲 Install App
@@ -1004,6 +1142,8 @@ function HomePage() {
           </>
         )}
 
+        <BuyAgainSection />
+
         {/* Why us */}
         <div style={{margin:"4rem 0 1rem"}}>
           <h2 className="section-title mb-3">Why Amar Veggies?</h2>
@@ -1030,21 +1170,24 @@ function HomePage() {
    SHOP PAGE
 ═══════════════════════════════════════════════════════════ */
 function ShopPage() {
+  const {user} = useContext(AuthCtx);
   const {nav, params} = useContext(RouterCtx);
   const {setProducts} = useContext(CartCtx);
   const [products, setLocal] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(params.category || "All");
   const [loading, setLoading] = useState(true);
-  const cats = ["All", ...new Set(products.map(p => p.category))];
+  const [favoriteIds, setFavoriteIds] = useState([]);
+  const cats = ["All", ...(user ? ["Favorites"] : []), ...new Set(products.map(p => p.category))];
 
   useEffect(() => {
     setLoading(true);
     apiFetch("/products").then(d => { setLocal(d); setProducts(d); }).catch(()=>{}).finally(()=>setLoading(false));
-  }, []);
+    if (user) syncFavoritesFromServer().then(setFavoriteIds);
+  }, [user]);
 
   const filtered = products.filter(p => {
-    const matchCat = category === "All" || p.category === category;
+    const matchCat = category === "All" || (category === "Favorites" ? favoriteIds.includes(p.id) : p.category === category);
     const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.description?.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
@@ -1130,7 +1273,10 @@ function CartPage() {
         <div className="empty-state-icon">🧺</div>
         <h3>Your basket is empty</h3>
         <p className="mb-3">Add some fresh produce to get started</p>
-        <button className="btn btn-primary" onClick={() => nav("shop")}>Browse Shop</button>
+        <div className="flex gap-2 justify-center flex-wrap">
+          <button className="btn btn-primary" onClick={() => nav("shop")}>Browse Shop</button>
+          <RepeatLastOrderButton compact />
+        </div>
       </div>
     </div>
   );
@@ -1333,6 +1479,9 @@ function CheckoutPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [previousLoaded, setPreviousLoaded] = useState(false);
+  const minimumOrder = 100;
+  const belowMinimum = subtotal < minimumOrder;
+  const notePresets = ["Call before delivery", "Leave at door", "No plastic bag", "Ring the bell"];
 
   useEffect(() => {
     let cancelled = false;
@@ -1457,6 +1606,7 @@ function CheckoutPage() {
   };
 
   const submit = async () => {
+    if (belowMinimum) { setErr(`Minimum order value is ₹${minimumOrder}. Add ₹${(minimumOrder - subtotal).toFixed(0)} more to checkout.`); return; }
     if (!form.address || !form.phone || !form.slot) { setErr("Please fill in all required fields"); return; }
     setLoading(true); setErr("");
     try {
@@ -1492,7 +1642,14 @@ function CheckoutPage() {
                 <option>4:00 PM – 6:00 PM (Evening)</option>
               </select>
             </div>
-            <div className="field"><label>Special Instructions (optional)</label><textarea placeholder="E.g. Leave at door, no plastic bags" rows={2} value={form.notes} onChange={e => setForm(f=>({...f,notes:e.target.value}))}/></div>
+            <div className="field"><label>Special Instructions (optional)</label>
+              <div className="flex gap-1 flex-wrap" style={{marginBottom:".6rem"}}>
+                {notePresets.map(note => (
+                  <button key={note} type="button" className="chip" onClick={() => setForm(f => ({...f, notes: f.notes?.includes(note) ? f.notes : `${f.notes ? f.notes + "; " : ""}${note}`}))}>{note}</button>
+                ))}
+              </div>
+              <textarea placeholder="E.g. Leave at door, no plastic bags" rows={2} value={form.notes} onChange={e => setForm(f=>({...f,notes:e.target.value}))}/>
+            </div>
           </div>
         </div>
 
@@ -1510,6 +1667,7 @@ function CheckoutPage() {
           <div className="flex justify-between" style={{fontWeight:700,fontSize:"1.1rem",marginBottom:"1.25rem"}}>
             <span>Total</span><span style={{color:"var(--leaf)",fontFamily:"'Cormorant Garamond',serif",fontSize:"1.4rem"}}>₹{total}</span>
           </div>
+          {belowMinimum && <div className="form-err">Minimum order is ₹{minimumOrder}. Add ₹{(minimumOrder - subtotal).toFixed(0)} more.</div>}
           <div style={{borderTop:"1px solid var(--border)",borderBottom:"1px solid var(--border)",padding:"1rem 0",marginBottom:"1.25rem",fontSize:".82rem",color:"var(--muted)"}}>
             <div style={{fontWeight:700,color:"var(--ink)",marginBottom:".75rem"}}>Choose Payment Method</div>
             <label style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".65rem",cursor:"pointer"}}>
@@ -1521,7 +1679,7 @@ function CheckoutPage() {
               <span>💳 Pay Online with Razorpay / UPI</span>
             </label>
           </div>
-          <button className="btn btn-primary btn-full btn-lg" onClick={submit} disabled={loading}>
+          <button className="btn btn-primary btn-full btn-lg" onClick={submit} disabled={loading || belowMinimum}>
             {loading ? (paymentMethod === "online" ? "Opening Payment…" : "Placing Order…") : (paymentMethod === "online" ? `Pay ₹${total}` : `Place Order ₹${total}`)}
           </button>
           <p className="text-xs text-muted mt-2" style={{textAlign:"center"}}>

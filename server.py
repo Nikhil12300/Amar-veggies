@@ -89,6 +89,13 @@ class User(Base):
     is_admin: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
+class UserFavorite(Base):
+    __tablename__ = "user_favorites"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    product_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
 class DeliveryPartner(Base):
     __tablename__ = "delivery_partners"
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -1465,6 +1472,104 @@ def list_orders(user: Dict[str, Any] = Depends(get_current_user), db: Session = 
     else:
         rows = db.query(Order).filter(Order.user_id == user["id"]).order_by(Order.created_at.desc()).all()
     return models_to_list(rows)
+
+
+@app.get("/api/orders/repeat-last")
+def repeat_last_order(user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = (
+        db.query(Order)
+        .filter(Order.user_id == user["id"])
+        .filter(Order.status != "cancelled")
+        .order_by(Order.created_at.desc())
+        .first()
+    )
+    if not row:
+        return {"items": [], "message": "No previous order found"}
+
+    order_dict = model_to_dict(row) or {}
+    available_items = []
+    for item in order_dict.get("items", []):
+        product = db.query(Product).filter(Product.id == item.get("product_id")).first()
+        product_dict = model_to_dict(product)
+        if not product_dict or not product_dict.get("available"):
+            continue
+        selected_weight = int(item.get("selected_weight") or 1000)
+        quantity = int(item.get("quantity") or 1)
+        stock_needed = round((selected_weight / 1000) * quantity, 3)
+        if float(product.stock or 0) < stock_needed:
+            continue
+        available_items.append({
+            "product_id": item.get("product_id"),
+            "selected_weight": selected_weight,
+            "quantity": quantity,
+            "name": product_dict.get("name"),
+        })
+
+    return {
+        "source_order_id": row.id,
+        "items": available_items,
+        "skipped_count": max(0, len(order_dict.get("items", [])) - len(available_items)),
+    }
+
+@app.get("/api/orders/buy-again")
+def buy_again_products(user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = (
+        db.query(Order)
+        .filter(Order.user_id == user["id"])
+        .filter(Order.status != "cancelled")
+        .order_by(Order.created_at.desc())
+        .limit(12)
+        .all()
+    )
+    scores: Dict[str, int] = {}
+    last_seen: Dict[str, str] = {}
+    for order in rows:
+        order_dict = model_to_dict(order) or {}
+        for item in order_dict.get("items", []):
+            pid = item.get("product_id")
+            if not pid:
+                continue
+            scores[pid] = scores.get(pid, 0) + int(item.get("quantity") or 1)
+            last_seen[pid] = order.created_at
+
+    ordered_ids = sorted(scores.keys(), key=lambda pid: (scores[pid], last_seen.get(pid, "")), reverse=True)
+    products = []
+    for pid in ordered_ids[:8]:
+        product = db.query(Product).filter(Product.id == pid).first()
+        product_dict = model_to_dict(product)
+        if product_dict and product_dict.get("available"):
+            product_dict["buy_again_count"] = scores[pid]
+            products.append(product_dict)
+    return products
+
+@app.get("/api/favorites")
+def list_favorites(user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.query(UserFavorite).filter(UserFavorite.user_id == user["id"]).order_by(UserFavorite.created_at.desc()).all()
+    product_ids = [r.product_id for r in rows]
+    products = []
+    for pid in product_ids:
+        product = db.query(Product).filter(Product.id == pid).first()
+        product_dict = model_to_dict(product)
+        if product_dict:
+            products.append(product_dict)
+    return {"product_ids": product_ids, "products": products}
+
+@app.post("/api/favorites/{pid}")
+def add_favorite(pid: str, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == pid).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
+    existing = db.query(UserFavorite).filter(UserFavorite.user_id == user["id"], UserFavorite.product_id == pid).first()
+    if not existing:
+        db.add(UserFavorite(id=str(uuid.uuid4()), user_id=user["id"], product_id=pid, created_at=now_iso()))
+        db.commit()
+    return {"ok": True, "favorite": True}
+
+@app.delete("/api/favorites/{pid}")
+def remove_favorite(pid: str, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.query(UserFavorite).filter(UserFavorite.user_id == user["id"], UserFavorite.product_id == pid).delete()
+    db.commit()
+    return {"ok": True, "favorite": False}
 
 @app.get("/api/orders/{oid}")
 def get_order(oid: str, user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db)):
