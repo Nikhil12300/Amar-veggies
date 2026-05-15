@@ -20,7 +20,7 @@ from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import create_engine, String, Integer, Float, Text, text
+from sqlalchemy import create_engine, String, Integer, Float, Text, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 from twilio.rest import Client 
@@ -175,27 +175,30 @@ class Order(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
 
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         migrations = [
-            "ALTER TABLE users ADD COLUMN fcm_token TEXT;",
-            "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) DEFAULT 'pending';",
-            "ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(255);",
-            "ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(255);",
-            "ALTER TABLE orders ADD COLUMN delivery_partner VARCHAR(255);",
-            "ALTER TABLE orders ADD COLUMN delivery_live_lat FLOAT;",
-            "ALTER TABLE orders ADD COLUMN delivery_live_lng FLOAT;",
-            "ALTER TABLE orders ADD COLUMN delivery_last_updated VARCHAR(255);",
+            ("users", "fcm_token", "ALTER TABLE users ADD COLUMN fcm_token TEXT"),
+            ("orders", "payment_status", "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) DEFAULT 'pending'"),
+            ("orders", "razorpay_order_id", "ALTER TABLE orders ADD COLUMN razorpay_order_id VARCHAR(255)"),
+            ("orders", "razorpay_payment_id", "ALTER TABLE orders ADD COLUMN razorpay_payment_id VARCHAR(255)"),
+            ("orders", "delivery_partner", "ALTER TABLE orders ADD COLUMN delivery_partner VARCHAR(255)"),
+            ("orders", "delivery_live_lat", "ALTER TABLE orders ADD COLUMN delivery_live_lat FLOAT"),
+            ("orders", "delivery_live_lng", "ALTER TABLE orders ADD COLUMN delivery_live_lng FLOAT"),
+            ("orders", "delivery_last_updated", "ALTER TABLE orders ADD COLUMN delivery_last_updated VARCHAR(255)"),
+            ("orders", "delivery_place_id", "ALTER TABLE orders ADD COLUMN delivery_place_id TEXT DEFAULT ''"),
+            ("orders", "delivery_maps_url", "ALTER TABLE orders ADD COLUMN delivery_maps_url TEXT DEFAULT ''"),
         ]
 
-        for migration in migrations:
-            try:
+        inspector = inspect(conn)
+        columns_by_table: Dict[str, set[str]] = {}
+        for table_name, column_name, migration in migrations:
+            if table_name not in columns_by_table:
+                columns_by_table[table_name] = {
+                    column["name"] for column in inspector.get_columns(table_name)
+                }
+            if column_name not in columns_by_table[table_name]:
                 conn.execute(text(migration))
-                conn.commit()
-            except Exception as e:
-                conn.rollback()
-                print(f"Migration skipped: {e}")
+                columns_by_table[table_name].add(column_name)
 
     print("Database migration completed")
 
@@ -575,9 +578,9 @@ def get_user_by_email_or_phone(db: Session, email: Optional[str], phone: Optiona
 # ── Security ──────────────────────────────────────────────────────
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
-razorpay_client: Any = razorpay.Client(
-    auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
-)
+razorpay_client: Optional[Any] = None
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 def hash_password(p):
     return pwd_ctx.hash(p)
@@ -1311,7 +1314,12 @@ def create_payment_order(
     body: CreatePaymentOrderIn,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    if razorpay_client is None:
+        raise HTTPException(503, "Razorpay credentials are not configured")
+
     amount_paise = int(body.amount * 100)
+    if amount_paise <= 0:
+        raise HTTPException(400, "Amount must be greater than 0")
 
     payment_order = razorpay_client.order.create({
         "amount": amount_paise,
@@ -1331,6 +1339,9 @@ def verify_payment(
     body: VerifyPaymentIn,
     db: Session = Depends(get_db)
 ):
+    if not RAZORPAY_KEY_SECRET:
+        raise HTTPException(503, "Razorpay credentials are not configured")
+
     generated_signature = hmac.new(
         bytes(RAZORPAY_KEY_SECRET, "utf-8"),
         bytes(
