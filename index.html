@@ -326,7 +326,14 @@ nav{width:100%;max-width:100vw;overflow:hidden}
 /* ── LEAFLET LOCATION PICKER ── */
 .location-box{background:var(--paper);border:1.5px solid var(--border);border-radius:14px;padding:1rem;margin-top:.5rem}
 .location-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin:.75rem 0}
-.map-canvas{height:280px;width:100%;border-radius:14px;border:1.5px solid var(--border);overflow:hidden;background:linear-gradient(135deg,#e8f5ee,#d8f3dc);color:var(--muted);font-size:.88rem;text-align:center}
+#checkoutMap,
+.checkout-map,
+.map-container,
+.map-canvas{position:relative;z-index:1;overflow:hidden}
+.checkout-actions,
+.checkout-buttons,
+.place-order-section{position:relative;z-index:10}
+.map-canvas{height:280px;width:100%;border-radius:14px;border:1.5px solid var(--border);background:linear-gradient(135deg,#e8f5ee,#d8f3dc);color:var(--muted);font-size:.88rem;text-align:center}
 .map-placeholder{height:100%;display:flex;align-items:center;justify-content:center;padding:1rem}
 .location-pill{display:inline-flex;align-items:center;gap:.35rem;background:#ecfdf5;border:1px solid #86efac;color:#15803d;border-radius:999px;padding:.35rem .7rem;font-size:.78rem;font-weight:700;margin-top:.65rem}
 .location-help{font-size:.78rem;color:var(--muted);line-height:1.45;margin-top:.55rem}
@@ -491,7 +498,6 @@ async function getPreviousCheckoutDetails() {
   return {
     address: latest.address || "",
     phone: latest.phone || "",
-    slot: latest.slot || "",
     notes: latest.notes || ""
   };
 }
@@ -1186,7 +1192,14 @@ function ShopPage() {
     if (user) syncFavoritesFromServer().then(setFavoriteIds);
   }, [user]);
 
-  const filtered = products.filter(p => {
+  const sortedProducts = [...products].sort((a, b) => {
+    const aPurchased = Number(a.total_purchased || a.purchased_count || a.sold_count || 0);
+    const bPurchased = Number(b.total_purchased || b.purchased_count || b.sold_count || 0);
+
+    return bPurchased - aPurchased;
+  });
+
+  const filtered = sortedProducts.filter(p => {
     const matchCat = category === "All" || (category === "Favorites" ? favoriteIds.includes(p.id) : p.category === category);
     const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.description?.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
@@ -1457,7 +1470,7 @@ function LocationPicker({value, onChange}) {
         <button className="btn btn-ghost" type="button" onClick={findAddress}>Find on map</button>
         {value.lat && value.lng && <a className="btn btn-ghost" target="_blank" href={`https://www.google.com/maps/search/?api=1&query=${value.lat},${value.lng}`}>Open pin</a>}
       </div>
-      <div ref={mapRef} className="map-canvas">
+      <div id="checkoutMap" ref={mapRef} className="map-canvas checkout-map map-container">
         {mapErr && <div className="map-placeholder">{mapErr}. You can still type the address manually.</div>}
       </div>
       {value.lat && value.lng && <div className="location-pill">✓ Exact location saved</div>}
@@ -1474,13 +1487,11 @@ function CheckoutPage() {
   const {user} = useContext(AuthCtx);
   const {nav} = useContext(RouterCtx);
   const toast = useContext(ToastCtx);
-  const [form, setForm] = useState({address:"",phone:"",slot:"",notes:"",delivery_lat:null,delivery_lng:null,delivery_place_id:""});
+  const [form, setForm] = useState({address:"",phone:"",notes:"",delivery_lat:null,delivery_lng:null,delivery_place_id:""});
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [previousLoaded, setPreviousLoaded] = useState(false);
-  const minimumOrder = 100;
-  const belowMinimum = subtotal < minimumOrder;
   const notePresets = ["Call before delivery", "Leave at door", "No plastic bag", "Ring the bell"];
 
   useEffect(() => {
@@ -1500,7 +1511,6 @@ function CheckoutPage() {
           ...prev,
           address: prev.address || previous.address,
           phone: prev.phone || previous.phone || user.phone || "",
-          slot: prev.slot || previous.slot,
           notes: prev.notes || previous.notes
         }));
         setPreviousLoaded(true);
@@ -1524,7 +1534,15 @@ function CheckoutPage() {
       selected_weight: Number(i.weight) || 1000
     }));
 
-    return {items: orderItems, ...form};
+    return {
+      items: orderItems,
+      address: form.address,
+      phone: form.phone,
+      notes: form.notes,
+      delivery_lat: form.delivery_lat,
+      delivery_lng: form.delivery_lng,
+      delivery_place_id: form.delivery_place_id
+    };
   };
 
   const placeCodOrder = async () => {
@@ -1566,7 +1584,6 @@ function CheckoutPage() {
           contact: form.phone || user.phone || ""
         },
         notes: {
-          delivery_slot: form.slot,
           delivery_address: form.address
         },
         theme: {
@@ -1606,8 +1623,7 @@ function CheckoutPage() {
   };
 
   const submit = async () => {
-    if (belowMinimum) { setErr(`Minimum order value is ₹${minimumOrder}. Add ₹${(minimumOrder - subtotal).toFixed(0)} more to checkout.`); return; }
-    if (!form.address || !form.phone || !form.slot) { setErr("Please fill in all required fields"); return; }
+    if (!form.address || !form.phone) { setErr("Please fill in all required fields"); return; }
     setLoading(true); setErr("");
     try {
       if (paymentMethod === "online") {
@@ -1633,15 +1649,6 @@ function CheckoutPage() {
             <div className="field"><label>Phone Number *</label><input placeholder="e.g. 98765 43210" value={form.phone} onChange={e => setForm(f=>({...f,phone:e.target.value}))}/></div>
             <div className="field"><label>Delivery Address *</label><textarea placeholder="House no., Street, Area, Pincode" rows={3} value={form.address} onChange={e => setForm(f=>({...f,address:e.target.value}))}/></div>
             <LocationPicker value={{lat:form.delivery_lat,lng:form.delivery_lng,address:form.address,placeId:form.delivery_place_id}} onChange={(loc)=>setForm(f=>({...f,address:loc.address || f.address,delivery_lat:loc.lat,delivery_lng:loc.lng,delivery_place_id:loc.placeId || ""}))}/>
-            <div className="field"><label>Delivery Slot *</label>
-              <select value={form.slot} onChange={e => setForm(f=>({...f,slot:e.target.value}))}>
-                <option value="">Select a time slot</option>
-                <option>Instant (half an hour approx)</option>
-                <option>7:00 AM – 9:00 AM (Morning)</option>
-                <option>11:00 AM – 1:00 PM (Noon)</option>
-                <option>4:00 PM – 6:00 PM (Evening)</option>
-              </select>
-            </div>
             <div className="field"><label>Special Instructions (optional)</label>
               <div className="flex gap-1 flex-wrap" style={{marginBottom:".6rem"}}>
                 {notePresets.map(note => (
@@ -1653,7 +1660,7 @@ function CheckoutPage() {
           </div>
         </div>
 
-        <div style={{background:"var(--white)",borderRadius:20,border:"1.5px solid var(--border)",padding:"1.5rem",position:"sticky",top:84}}>
+        <div className="place-order-section" style={{background:"var(--white)",borderRadius:20,border:"1.5px solid var(--border)",padding:"1.5rem",position:"relative"}}>
           <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:"1.3rem",fontWeight:700,marginBottom:"1.1rem"}}>Order Summary</h3>
           {items.map(i => (
             <div key={i.id} className="flex justify-between mb-1" style={{fontSize:".83rem",paddingBottom:".5rem",borderBottom:"1px solid var(--border)"}}>
@@ -1667,7 +1674,6 @@ function CheckoutPage() {
           <div className="flex justify-between" style={{fontWeight:700,fontSize:"1.1rem",marginBottom:"1.25rem"}}>
             <span>Total</span><span style={{color:"var(--leaf)",fontFamily:"'Cormorant Garamond',serif",fontSize:"1.4rem"}}>₹{total}</span>
           </div>
-          {belowMinimum && <div className="form-err">Minimum order is ₹{minimumOrder}. Add ₹{(minimumOrder - subtotal).toFixed(0)} more.</div>}
           <div style={{borderTop:"1px solid var(--border)",borderBottom:"1px solid var(--border)",padding:"1rem 0",marginBottom:"1.25rem",fontSize:".82rem",color:"var(--muted)"}}>
             <div style={{fontWeight:700,color:"var(--ink)",marginBottom:".75rem"}}>Choose Payment Method</div>
             <label style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".65rem",cursor:"pointer"}}>
@@ -1679,7 +1685,7 @@ function CheckoutPage() {
               <span>💳 Pay Online with Razorpay / UPI</span>
             </label>
           </div>
-          <button className="btn btn-primary btn-full btn-lg" onClick={submit} disabled={loading || belowMinimum}>
+          <button className="btn btn-primary btn-full btn-lg checkout-actions checkout-buttons" onClick={submit} disabled={loading}>
             {loading ? (paymentMethod === "online" ? "Opening Payment…" : "Placing Order…") : (paymentMethod === "online" ? `Pay ₹${total}` : `Place Order ₹${total}`)}
           </button>
           <p className="text-xs text-muted mt-2" style={{textAlign:"center"}}>
@@ -1718,7 +1724,6 @@ function OrderSuccessPage() {
           <div className="flex justify-between fw-700"><span>Total</span><span style={{color:"var(--leaf)"}}>₹{order.total}</span></div>
         </div>
         <div style={{background:"#fef9c3",borderRadius:10,padding:".65rem",fontSize:".8rem",color:"#92400e",marginBottom:"1.5rem"}}>
-          📍 Slot: {order.slot}<br/>
           💳 Payment: {order.payment_status === "paid" ? "Paid Online" : "Cash on Delivery"}
           {order.delivery_maps_url && <><br/><a href={order.delivery_maps_url} target="_blank" style={{color:"#92400e",fontWeight:700}}>View pinned location</a></>}
         </div>
@@ -1870,7 +1875,6 @@ function OrdersPage() {
             <div className="flex justify-between fw-700 mt-2"><span>Total</span><span style={{color:"var(--leaf)"}}>₹{selected.total}</span></div>
             <p className="text-sm text-muted mt-2">📍 {selected.address} · 📞 {selected.phone}</p>
             {selected.delivery_maps_url && <p className="text-sm mt-1"><a href={selected.delivery_maps_url} target="_blank" style={{color:"var(--leaf)",fontWeight:700}}>Open pinned location</a></p>}
-            <p className="text-sm text-muted">🕒 Slot: {selected.slot}</p>
             {tracking?.delivery_partner && (
               <div style={{
                 background: "var(--cream)",
@@ -2273,7 +2277,11 @@ function ProductFormModal({product, onClose, onSaved}) {
         </div>
         <div className="field-row">
           <div className="field"><label>Emoji (fallback)</label><input placeholder="🌿" value={form.emoji} onChange={e=>f("emoji")(e.target.value)}/></div>
-          <div className="field"><label>Category *</label><input placeholder="e.g. Fruit" value={form.category} onChange={e=>f("category")(e.target.value)}/></div>
+          <div className="field"><label>Category *</label><select id="productCategory" required value={form.category} onChange={e=>f("category")(e.target.value)}>
+            <option value="">Select category</option>
+            <option value="fruit">Fruit</option>
+            <option value="vegetable">Vegetable</option>
+          </select></div>
         </div>
         <div className="field-row">
           <div className="field"><label>Price (₹/kg) *</label><input type="number" min="0" placeholder="0.00" value={form.price} onChange={e=>f("price")(e.target.value)}/></div>
@@ -2534,7 +2542,7 @@ function DeliveryPartnerPage() {
           </div>
 
           <p className="text-sm mb-1">📍 {o.address}</p>
-          <p className="text-sm mb-1">📞 {o.phone} · 🕒 {o.slot}</p>
+          <p className="text-sm mb-1">📞 {o.phone}</p>
 
           {o.notes && (
             <div style={{background:"var(--cream)",borderRadius:10,padding:".6rem .75rem",fontSize:".8rem",marginBottom:".75rem"}}>
@@ -2929,7 +2937,7 @@ function AdminPage() {
             {loadingO ? <div className="empty-state"><p>Loading…</p></div> : (
               <div className="table-wrap">
                 <table className="table">
-                  <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Slot</th><th>Delivery</th><th>Status</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>
                     {orders.filter(o => orderStatusFilter === "all" ? true : orderStatusFilter === "active" ? !["delivered","cancelled"].includes(o.status) : normalizeOrderStatus(o.status) === orderStatusFilter).map(o => (
                       <tr key={o.id} style={{cursor:"pointer"}} onClick={() => setSelOrder(o)}>
@@ -2942,7 +2950,6 @@ function AdminPage() {
                           <div className="text-xs text-muted">{o.payment || "—"}</div>
                           {o.razorpay_payment_id && <div className="text-xs text-muted" style={{fontFamily:"monospace"}}>{o.razorpay_payment_id}</div>}
                         </td>
-                        <td className="text-xs">{o.slot?.split("(")[1]?.replace(")","") || o.slot}</td>
                         <td onClick={e=>e.stopPropagation()}>
                           <select
                             value={o.delivery_partner || ""}
@@ -3022,7 +3029,7 @@ function AdminPage() {
               <a className="btn btn-ghost" target="_blank" href={selOrder.delivery_maps_url}>Open pin</a>
               <a className="btn btn-primary" target="_blank" href={`https://www.google.com/maps/dir/?api=1&destination=${selOrder.delivery_lat},${selOrder.delivery_lng}&travelmode=driving`}>Start delivery route</a>
             </div>}
-            <p className="text-sm mb-2">📞 {selOrder.phone} · 🕒 {selOrder.slot}</p>
+            <p className="text-sm mb-2">📞 {selOrder.phone}</p>
             <div className="field mb-3">
               <label>Assign Delivery Partner</label>
               <select

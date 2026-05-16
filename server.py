@@ -398,8 +398,6 @@ def send_whatsapp_order_notification(order_data: Dict[str, Any]) -> bool:
 
 💰 Total: ₹{order_data.get('total')}
 
-🕒 Slot: {order_data.get('slot')}
-
 📝 Notes:
 {order_data.get('notes') or 'None'}
 
@@ -719,7 +717,7 @@ class OrderIn(BaseModel):
     items: List[CartItemIn]
     address: str
     phone: str
-    slot: str
+    slot: Optional[str] = ""
     notes: Optional[str] = ""
     delivery_lat: Optional[float] = None
     delivery_lng: Optional[float] = None
@@ -1440,7 +1438,7 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
         items=json.dumps(items_detail),
         address=body.address,
         phone=body.phone,
-        slot=body.slot,
+        slot=body.slot or "",
         notes=body.notes or "",
         delivery_lat=body.delivery_lat,
         delivery_lng=body.delivery_lng,
@@ -1467,7 +1465,6 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
             "address": body.address,
             "items": items_detail,
             "total": round(subtotal + delivery, 2),
-            "slot": body.slot,
             "notes": body.notes or "",
         })
     except Exception as e:
