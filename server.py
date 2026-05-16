@@ -365,6 +365,8 @@ def send_email_otp(to_email: str, otp: str, purpose: str = "verification") -> bo
         return False
 
 def send_whatsapp_order_notification(order_data: Dict[str, Any]) -> bool:
+    print("📦 New order WhatsApp function called")
+    print("Sending admin WhatsApp to:", ADMIN_WHATSAPP_NUMBER)
     print("TWILIO_ACCOUNT_SID:", bool(TWILIO_ACCOUNT_SID))
     print("TWILIO_AUTH_TOKEN:", bool(TWILIO_AUTH_TOKEN))
     print("TWILIO_WHATSAPP_NUMBER:", TWILIO_WHATSAPP_NUMBER)
@@ -1510,6 +1512,7 @@ def create_order(body: OrderIn, user: Dict[str, Any] = Depends(get_current_user)
     db.commit()
     db.refresh(order)
     try:
+        print("🚀 Triggering admin WhatsApp notification")
         send_whatsapp_order_notification({
             "user_name": user["name"],
             "phone": body.phone,
