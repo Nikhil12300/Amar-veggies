@@ -1197,25 +1197,7 @@ function ShopPage() {
   }, [user]);
 
   const sortedProducts = [...products].sort((a, b) => {
-    const aPurchased = Number(
-      a.total_purchased ??
-      a.purchased_count ??
-      a.sold_count ??
-      a.orders_count ??
-      a.order_count ??
-      0
-    );
-
-    const bPurchased = Number(
-      b.total_purchased ??
-      b.purchased_count ??
-      b.sold_count ??
-      b.orders_count ??
-      b.order_count ??
-      0
-    );
-
-    return bPurchased - aPurchased;
+    return Number(b.total_purchased || 0) - Number(a.total_purchased || 0);
   });
 
   const filtered = sortedProducts.filter(p => {

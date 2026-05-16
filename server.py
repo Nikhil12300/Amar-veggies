@@ -506,6 +506,46 @@ def model_to_dict(obj: Any) -> Optional[Dict[str, Any]]:
 def models_to_list(rows: List[Any]) -> List[Dict[str, Any]]:
     return [d for d in (model_to_dict(r) for r in rows) if d is not None]
 
+def add_total_purchased(
+    db: Session,
+    product_dicts: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    product_ids = {p.get("id") for p in product_dicts if p.get("id")}
+    totals: Dict[str, int] = {str(pid): 0 for pid in product_ids}
+
+    if not totals:
+        return product_dicts
+
+    rows = db.query(Order.items).all()
+    for (items_raw,) in rows:
+        try:
+            items = json.loads(items_raw) if isinstance(items_raw, str) else items_raw
+        except Exception:
+            continue
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            product_id = str(item.get("product_id") or "")
+            if product_id in totals:
+                totals[product_id] += int(item.get("quantity") or 0)
+
+    for product in product_dicts:
+        product["total_purchased"] = totals.get(str(product.get("id")), 0)
+
+    return product_dicts
+
+def add_product_total_purchased(
+    db: Session,
+    product_dict: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    if product_dict is None:
+        return None
+    return add_total_purchased(db, [product_dict])[0]
+
 def record_stock_history(
     db: Session,
     product: Product,
@@ -1207,14 +1247,15 @@ def list_products(category: Optional[str] = None, search: Optional[str] = None, 
         q = q.filter(Product.name.ilike(f"%{search}%"))
     if featured is not None:
         q = q.filter(Product.featured == (1 if featured else 0))
-    return models_to_list(q.order_by(Product.created_at.desc()).all())
+    products = models_to_list(q.order_by(Product.created_at.desc()).all())
+    return add_total_purchased(db, products)
 
 @app.get("/api/products/{pid}")
 def get_product(pid: str, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == pid).first()
     if not p:
         raise HTTPException(404, "Product not found")
-    return model_to_dict(p)
+    return add_product_total_purchased(db, model_to_dict(p))
 
 @app.post("/api/products", dependencies=[Depends(require_admin)])
 def create_product(body: ProductIn, db: Session = Depends(get_db)):
@@ -1237,7 +1278,7 @@ def create_product(body: ProductIn, db: Session = Depends(get_db)):
     db.add(product)
     db.commit()
     db.refresh(product)
-    return model_to_dict(product)
+    return add_product_total_purchased(db, model_to_dict(product))
 
 @app.put("/api/products/{pid}", dependencies=[Depends(require_admin)])
 def update_product(pid: str, body: ProductIn, db: Session = Depends(get_db)):
@@ -1257,7 +1298,7 @@ def update_product(pid: str, body: ProductIn, db: Session = Depends(get_db)):
     product.quantity_options = json.dumps(p.get("quantity_options") or [100, 250, 500, 1000])
     db.commit()
     db.refresh(product)
-    return model_to_dict(product)
+    return add_product_total_purchased(db, model_to_dict(product))
 
 @app.delete("/api/products/{pid}", dependencies=[Depends(require_admin)])
 def delete_product(pid: str, db: Session = Depends(get_db)):
@@ -1285,7 +1326,7 @@ def restock_product(pid: str, body: RestockIn, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(product)
-    return model_to_dict(product)
+    return add_product_total_purchased(db, model_to_dict(product))
 
 @app.get("/api/admin/low-stock", dependencies=[Depends(require_admin)])
 def low_stock_products(limit: float = 2, db: Session = Depends(get_db)):
